@@ -1,0 +1,5 @@
+/* Test that we can read and write text files in sequential mode (that executes read at compile time and then puts data into a constant scan).
+ */
+a = read[file="simple_text.txt", format="a INTEGER, b BIGINT, c DECIMAL, e VARCHAR, f CHAR(8), g DATETIME, h DATE", mode="text", broadcast="true"];
+d = write[file="output.txt", mode="text"];
+a -> d;

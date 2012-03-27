@@ -1,0 +1,5 @@
+/* Test that we can read and write compressed text files.  
+ */
+a = read[file="simple_text.txt", format="a INTEGER, b BIGINT, c DECIMAL, e VARCHAR, f CHAR(8), g DATETIME, h DATE", mode="text"];
+d = write[file="output.txt.gz", mode="text"];
+a -> d;

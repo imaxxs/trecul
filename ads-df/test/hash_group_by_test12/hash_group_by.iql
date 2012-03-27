@@ -1,0 +1,7 @@
+a = generate[program="RECORDCOUNT AS ignore, CASE WHEN RECORDCOUNT < 5 THEN NULL ELSE RECORDCOUNT/5 END AS a, CAST(RECORDCOUNT AS INTEGER) AS b", numRecords=23];
+b = hash_group_by[key="a", output="SUM(b) AS total, a"];
+c = sort[key="a"];
+d = write[file="output.txt", mode="text"];
+a -> b;
+b -> c;
+c -> d;

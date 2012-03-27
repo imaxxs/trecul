@@ -1,0 +1,10 @@
+g = generate[output="RECORDCOUNT / 1000 AS a, RECORDCOUNT % 3 AS b, RECORDCOUNT % 7 AS c, 1 AS d", numRecords = 20000000];
+
+h = hash_group_by[key="a", key="b", key="c", output="a,b,c,1 AS dummy, SUM(d) AS d"];
+g -> h; 
+
+h2 = hash_group_by[key="dummy", output="SUM(1) AS num_groups"];
+h -> h2;
+
+w = write[file="output.txt", mode="text"];
+h2 -> w;

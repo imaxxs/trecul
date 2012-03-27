@@ -1,0 +1,9 @@
+g = generate[output="RECORDCOUNT/3 AS a, RECORDCOUNT*RECORDCOUNT AS b, 2*RECORDCOUNT AS c", numRecords=15];
+
+rt = sort_group_by[key="a", initialize="99999999999LL AS minvar, CAST(0 AS BIGINT) AS sumvar", update="
+SET minvar = CASE WHEN b < minvar THEN b ELSE minvar END
+SET sumvar = sumvar + c", runningtotal="true"];
+g -> rt;
+
+w = write[file="output.txt", mode="text"];
+rt -> w;

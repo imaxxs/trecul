@@ -1,0 +1,13 @@
+/**
+ * A sort merge in an interleaving pattern with VARCHAR
+ */
+g1 = generate[output="CASE WHEN RECORDCOUNT = 0 THEN 'aaaa' WHEN RECORDCOUNT = 1 THEN 'ccc' WHEN RECORDCOUNT = 2 THEN 'eeee' ELSE 'ggg' END AS a", numRecords=4];
+
+g2 = generate[output="CASE WHEN RECORDCOUNT = 0 THEN 'bbbb' WHEN RECORDCOUNT = 1 THEN 'ddddd' WHEN RECORDCOUNT = 2 THEN 'ffff' ELSE 'hhhh' END AS a", numRecords=4];
+
+m = sort_merge[key="a"];
+g1 -> m;
+g2 -> m;
+
+w = write[file="output.txt", mode="text"];
+m -> w;

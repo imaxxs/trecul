@@ -1,0 +1,5 @@
+/*  This tests case insensitivity of keywords in the format.
+ */
+a = read[file="simple_text.txt", format="a integer, b BIGINT, c DECimal, e VARCHAR, f CHAR(8), g datetime, h Date", mode="text"];
+d = write[file="output.txt", mode="text"];
+a -> d;

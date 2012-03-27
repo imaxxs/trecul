@@ -1,0 +1,7 @@
+#a	b	c	e	f	g	h
+234332	88823482348234	778234.33323	This is a varchar	aaaaaaaa	2011-01-09 12:12:12	2010-01-28
+-7723433	-999923499992349932	-7772734.5555	This line has negatives	bbbbbbbb	2000-12-25 00:00:00	1999-07-31
+# This is also a comment
+# Tests two comment lines in a row
++99293433	+77717273732774273	+6626663.88	This line has positves	cccccccc	2048-02-11 22:25:01	2020-09-28
+# Test a trailing comment line

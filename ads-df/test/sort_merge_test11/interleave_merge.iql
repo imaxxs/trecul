@@ -1,0 +1,13 @@
+/**
+ * A sort merge in an interleaving pattern with BIGINT
+ */
+g1 = generate[output="CASE WHEN RECORDCOUNT > 0 THEN 2*RECORDCOUNT ELSE NULL END AS a", numRecords=10];
+
+g2 = generate[output="CASE WHEN RECORDCOUNT > 0 THEN 2*RECORDCOUNT+1 ELSE NULL END AS a", numRecords=10];
+
+m = sort_merge[key="a"];
+g1 -> m;
+g2 -> m;
+
+w = write[file="output.txt", mode="text"];
+m -> w;

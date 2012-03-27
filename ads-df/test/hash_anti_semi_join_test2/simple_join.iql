@@ -1,0 +1,16 @@
+/**
+ * A simple anti semi join.  Uses non-identity transfer.
+ */
+g1 = generate[output="RECORDCOUNT/2 AS a", numRecords=10];
+
+g2 = generate[output="RECORDCOUNT AS b", numRecords=10];
+
+j = hash_right_anti_semi_join[tableKey="a", probeKey="b", output="b, b*b AS a2"];
+g1 -> j;
+g2 -> j;
+
+p = sort[key="b"];
+j -> p;
+
+d = write[file="output.txt", mode="text"];
+p -> d;

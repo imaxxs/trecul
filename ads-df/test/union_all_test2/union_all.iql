@@ -1,0 +1,7 @@
+g1 = generate[output="RECORDCOUNT AS a, RECORDCOUNT AS b",numRecords=200];
+g2 = generate[output="RECORDCOUNT AS a, RECORDCOUNT AS b",numRecords=300];
+u = union_all[concatenate="true"];
+g1 -> u;
+g2 -> u;
+w = write[file="output.txt", mode="text"];
+u -> w;

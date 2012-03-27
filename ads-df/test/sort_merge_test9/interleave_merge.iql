@@ -1,0 +1,13 @@
+/**
+ * A sort merge in an interleaving pattern with BIGINT and two keys
+ */
+g1 = generate[output="RECORDCOUNT/4 AS a, 2*(RECORDCOUNT%4) AS b", numRecords=16];
+
+g2 = generate[output="RECORDCOUNT/4 AS a, 2*(RECORDCOUNT%4) + 1 AS b", numRecords=16];
+
+m = sort_merge[key="a", key="b"];
+g1 -> m;
+g2 -> m;
+
+w = write[file="output.txt", mode="text"];
+m -> w;

@@ -1,0 +1,16 @@
+/**
+ * A sort merge in an append pattern with BIGINT
+ */
+g1 = generate[output="RECORDCOUNT AS a", numRecords=10];
+g2 = generate[output="RECORDCOUNT+10 AS a", numRecords=10];
+g3 = generate[output="RECORDCOUNT+20 AS a", numRecords=10];
+g4 = generate[output="RECORDCOUNT+30 AS a", numRecords=10];
+
+m = sort_merge[key="a"];
+g1 -> m;
+g2 -> m;
+g3 -> m;
+g4 -> m;
+
+w = write[file="output.txt", mode="text"];
+m -> w;

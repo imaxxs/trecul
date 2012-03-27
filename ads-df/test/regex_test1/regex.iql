@@ -1,0 +1,5 @@
+g = generate[output="RECORDCOUNT AS a, 5*RECORDCOUNT AS b_0, 5*RECORDCOUNT + 1 AS b_1, 5*RECORDCOUNT + 2 AS b_2, 5*RECORDCOUNT + 3 AS b_3, 5*RECORDCOUNT + 4 AS b_4, 100 + RECORDCOUNT AS c", numRecords=10];
+c = copy[output="`b_([0-9]+)`"];
+g -> c;
+w = write[file="output.txt", mode="text"];
+c -> w;

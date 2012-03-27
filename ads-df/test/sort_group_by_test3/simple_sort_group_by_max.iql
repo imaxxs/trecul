@@ -1,0 +1,5 @@
+a = generate[program="RECORDCOUNT AS ignore, RECORDCOUNT/5 AS a, CAST(RECORDCOUNT AS INTEGER) AS b", numRecords=23];
+b = sort_group_by[key="a", output="a, MAX(b) AS total"];
+c = write[file="output.txt", mode="text"];
+a -> b;
+b -> c;

@@ -1,0 +1,48 @@
+/**
+ * A sort merge in an interleaving pattern with BIGINT and a "large" number of inputs.
+ */
+g1 = generate[output="20*RECORDCOUNT AS a", numRecords=5];
+g2 = generate[output="20*RECORDCOUNT+1 AS a", numRecords=5];
+g3 = generate[output="20*RECORDCOUNT+2 AS a", numRecords=5];
+g4 = generate[output="20*RECORDCOUNT+3 AS a", numRecords=5];
+g5 = generate[output="20*RECORDCOUNT+4 AS a", numRecords=5];
+g6 = generate[output="20*RECORDCOUNT+5 AS a", numRecords=5];
+g7 = generate[output="20*RECORDCOUNT+6 AS a", numRecords=5];
+g8 = generate[output="20*RECORDCOUNT+7 AS a", numRecords=5];
+g9 = generate[output="20*RECORDCOUNT+8 AS a", numRecords=5];
+g10 = generate[output="20*RECORDCOUNT+9 AS a", numRecords=5];
+g11 = generate[output="20*RECORDCOUNT+10 AS a", numRecords=5];
+g12 = generate[output="20*RECORDCOUNT+11 AS a", numRecords=5];
+g13 = generate[output="20*RECORDCOUNT+12 AS a", numRecords=5];
+g14 = generate[output="20*RECORDCOUNT+13 AS a", numRecords=5];
+g15 = generate[output="20*RECORDCOUNT+14 AS a", numRecords=5];
+g16 = generate[output="20*RECORDCOUNT+15 AS a", numRecords=5];
+g17 = generate[output="20*RECORDCOUNT+16 AS a", numRecords=5];
+g18 = generate[output="20*RECORDCOUNT+17 AS a", numRecords=5];
+g19 = generate[output="20*RECORDCOUNT+18 AS a", numRecords=5];
+g20 = generate[output="20*RECORDCOUNT+19 AS a", numRecords=5];
+
+m = sort_merge[key="a"];
+g1 -> m;
+g2 -> m;
+g3 -> m;
+g4 -> m;
+g5 -> m;
+g6 -> m;
+g7 -> m;
+g8 -> m;
+g9 -> m;
+g10 -> m;
+g11 -> m;
+g12 -> m;
+g13 -> m;
+g14 -> m;
+g15 -> m;
+g16 -> m;
+g17 -> m;
+g18 -> m;
+g19 -> m;
+g20 -> m;
+
+w = write[file="output.txt", mode="text"];
+m -> w;

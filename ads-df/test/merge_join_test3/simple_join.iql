@@ -1,0 +1,13 @@
+/**
+ * A simple many to many inner join.  
+ */
+g1 = generate[output="RECORDCOUNT/2 + 1 AS a", numRecords=10];
+
+g2 = generate[output="RECORDCOUNT/3 AS b", numRecords=20];
+
+j = merge_join[leftKey="a", rightKey="b"];
+g1 -> j;
+g2 -> j;
+
+d = write[file="output.txt", mode="text"];
+j -> d;

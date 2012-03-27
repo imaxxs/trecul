@@ -1,0 +1,19 @@
+/**
+ * A simple many to many inner join on a VARCHAR key
+ */
+g1 = generate[output="CASE WHEN RECORDCOUNT/2 = 0 THEN 'one' WHEN RECORDCOUNT/2 = 1 THEN 'two' WHEN RECORDCOUNT/2 = 2 THEN 'three' ELSE 'four' END AS a", numRecords=8];
+
+s1 = sort[key="a"];
+g1 -> s1;
+
+g2 = generate[output="CASE WHEN RECORDCOUNT/3 = 0 THEN 'one' WHEN RECORDCOUNT/3 = 1 THEN 'two' WHEN RECORDCOUNT/3 = 2 THEN 'three' ELSE 'four' END AS b", numRecords=12];
+
+s2 = sort[key="b"];
+g2 -> s2;
+
+j = merge_join[leftKey="a", rightKey="b"];
+s1 -> j;
+s2 -> j;
+
+d = write[file="output.txt", mode="text"];
+j -> d;

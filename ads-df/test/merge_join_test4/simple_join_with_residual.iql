@@ -1,0 +1,20 @@
+/**
+ * A simple many to many inner join with a residual.
+ */
+g1 = generate[output="RECORDCOUNT/2 + 1 AS a, RECORDCOUNT AS c", numRecords=10];
+
+g2 = generate[output="RECORDCOUNT/3 AS b, RECORDCOUNT AS d", numRecords=20];
+
+j = merge_join[leftKey="a", rightKey="b", where="c % 2 = d % 2"];
+g1 -> j;
+g2 -> j;
+
+/*
+ * Sort is still necessary because merge join makes no guarantee about
+ * sort order of fields not in the equijoin list.
+ */
+p = sort[key="a", key="b", key="c", key="d"];
+j -> p;
+
+d = write[file="output.txt", mode="text"];
+p -> d;

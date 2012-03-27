@@ -1,0 +1,16 @@
+/**
+ * A many to many join on multiple join keys.
+ */
+g1 = read[file="input1.txt", format="a INTEGER, b INTEGER, c INTEGER", mode="text"];
+
+g2 = read[file="input2.txt", format="d INTEGER, e INTEGER, f INTEGER", mode="text"];
+
+j = hash_join[tableKey="a", tableKey="b", probeKey="d", probeKey="e"];
+g1 -> j;
+g2 -> j;
+
+p = sort[key="a", key="b"];
+j -> p;
+
+d = write[file="output.txt", mode="text"];
+p -> d;

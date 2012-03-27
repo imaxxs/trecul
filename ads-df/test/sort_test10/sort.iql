@@ -1,0 +1,6 @@
+a = read[file="input.txt", format="a BIGINT, b BIGINT", mode="text"];
+b = sort[key="a ASC", key="b DESC", memory=70];
+c = write[file="output.txt", mode="text"];
+a -> b;
+b -> c;
+

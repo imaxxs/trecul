@@ -1,0 +1,13 @@
+/**
+ * A sort merge in an interleaving pattern with DATETIME
+ */
+g1 = generate[output="CAST('2011-05-10 12:33:11' AS DATETIME) + INTERVAL 2*CAST(RECORDCOUNT AS INTEGER) DAY AS a", numRecords=10];
+
+g2 = generate[output="CAST('2011-05-10 23:33:11' AS DATETIME) + INTERVAL 2*CAST(RECORDCOUNT AS INTEGER)+1 DAY AS a", numRecords=10];
+
+m = sort_merge[key="a"];
+g1 -> m;
+g2 -> m;
+
+w = write[file="output.txt", mode="text"];
+m -> w;

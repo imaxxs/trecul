@@ -1,0 +1,5 @@
+/* Test that we can write text files with format headers.
+ */
+a = read[file="simple_text.txt", format="a INTEGER, b BIGINT NULL, c DECIMAL NULL, e VARCHAR NULL, f CHAR(8) NULL, g DATETIME NULL, h DATE", mode="text"];
+d = write[file="output.txt", mode="text", formatFile="header.txt"];
+a -> d;

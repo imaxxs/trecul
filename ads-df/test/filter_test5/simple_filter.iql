@@ -1,0 +1,7 @@
+a = generate[program="RECORDCOUNT AS ignore, RECORDCOUNT/5 AS a, CAST(RECORDCOUNT AS INTEGER) AS b", numRecords=23];
+b = filter[where="DECLARE tmp = CASE WHEN a=3 THEN 1 ELSE 0 END, tmp=1"];
+c = sort[key="a"];
+d = write[file="output.txt", mode="text"];
+a -> b;
+b -> c;
+c -> d;

@@ -1,0 +1,16 @@
+/**
+ * A simple one to many inner join.  Many side in the probe.
+ */
+g1 = generate[output="RECORDCOUNT/2 AS a", numRecords=10];
+
+g2 = generate[output="RECORDCOUNT AS b", numRecords=10];
+
+j = hash_join[tableKey="b", probeKey="a"];
+g2 -> j;
+g1 -> j;
+
+p = sort[key="a", key="b"];
+j -> p;
+
+d = write[file="output.txt", mode="text"];
+p -> d;

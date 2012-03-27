@@ -1,0 +1,5 @@
+a = generate[program="RECORDCOUNT AS ignore, RECORDCOUNT/5 AS a, CAST(RECORDCOUNT AS INTEGER) AS b", numRecords=23];
+b = group_by[sortKey="a", output="a, SUM(b) AS total"];
+d = write[file="output.txt", mode="text"];
+a -> b;
+b -> d;

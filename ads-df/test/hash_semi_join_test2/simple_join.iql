@@ -1,0 +1,16 @@
+/**
+ * A simple semi join.  Uses default (identity) output.
+ */
+g1 = generate[output="RECORDCOUNT/2 AS a", numRecords=10];
+
+g2 = generate[output="RECORDCOUNT AS b", numRecords=10];
+
+j = hash_right_semi_join[tableKey="a", probeKey="b", output="b, b*b AS b2"];
+g1 -> j;
+g2 -> j;
+
+p = sort[key="b"];
+j -> p;
+
+d = write[file="output.txt", mode="text"];
+p -> d;

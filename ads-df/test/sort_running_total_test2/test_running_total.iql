@@ -1,0 +1,7 @@
+g = generate[output="RECORDCOUNT/3 AS a, RECORDCOUNT*RECORDCOUNT AS b, 2*RECORDCOUNT AS c", numRecords=15];
+
+rt = sort_group_by[key="a", output="a,b,c,MIN(b) AS rt", runningtotal="true"];
+g -> rt;
+
+w = write[file="output.txt", mode="text"];
+rt -> w;

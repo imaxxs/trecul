@@ -1,0 +1,9 @@
+/* Test aggregate functions of different types.
+ */
+a = read[file="simple_text.txt", format="a INTEGER NULL, b BIGINT NULL, c DECIMAL NULL, e VARCHAR, f CHAR(8), g DATETIME NULL, h DATE NULL", mode="text"];
+gb = hash_group_by[key="f", output="f, SUM(a) AS a0, MIN(a) AS a1, MAX(a) AS a2, SUM(b) AS b0, MIN(b) AS b1, MAX(b) AS b2, MIN(g) AS c0, MAX(g) AS d0, MIN(h) AS e0, MAX(h) AS f0, SUM(c) AS g0, MIN(c) AS g1, MAX(c) AS g2"];
+s = sort[key="f"];
+d = write[file="output.txt", mode="text"];
+a -> gb;
+gb -> s;
+s -> d;

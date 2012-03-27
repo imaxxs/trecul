@@ -1,0 +1,10 @@
+/**
+ * This sort allows so little memory that 1 of the 3 presorted runs
+ * must be spilled to disk.
+ */
+a = read[file="input.txt", format="a BIGINT, b BIGINT", mode="text"];
+b = sort[presorted="a", key="b", memory=150];
+c = write[file="output.txt", mode="text"];
+a -> b;
+b -> c;
+

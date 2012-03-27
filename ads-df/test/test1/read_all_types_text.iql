@@ -1,0 +1,8 @@
+/* Test that we can read and write text files.  Not many other tests stand a chance to work 
+ * if this is broken.
+ * NOTE: This test does not cover DOUBLE PRECISION because we lack the sophistication in output
+ * formatting to get the identity transformation.
+ */
+a = read[file="simple_text.txt", format="a INTEGER, b BIGINT, c DECIMAL, e VARCHAR, f CHAR(8), g DATETIME, h DATE", mode="text"];
+d = write[file="output.txt", mode="text"];
+a -> d;

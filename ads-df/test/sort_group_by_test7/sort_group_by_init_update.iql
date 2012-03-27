@@ -1,0 +1,12 @@
+/**
+ * This test illustrates using explicit initializer and updater in a group by.  
+ */
+a = generate[program="RECORDCOUNT AS ignore, RECORDCOUNT/5 AS a, CAST(RECORDCOUNT AS INTEGER) AS b", numRecords=23];
+b = sort_group_by[key="a", initialize="0 AS bin1, 0 AS bin2", update="
+DECLARE toBin1 INTEGER 
+SET toBin1 = CASE WHEN bin1+b < 20 THEN b ELSE 20-bin1 END 
+SET bin1 = bin1 + toBin1
+SET bin2 = bin2 + b - toBin1"];
+d = write[file="output.txt", mode="text"];
+a -> b;
+b -> d;

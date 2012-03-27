@@ -1,0 +1,4 @@
+g = generate[output="RECORDCOUNT AS a, CASE WHEN RECORDCOUNT%4 = 1 THEN RECORDCOUNT ELSE NULL END AS b", numRecords=25];
+w = write[file="output.txt", mode="text"];
+
+g -> w;

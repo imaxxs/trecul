@@ -1,0 +1,16 @@
+/**
+ * A simple many to many inner join on a DECIMAL key
+ */
+g1 = generate[output="RECORDCOUNT/2 + 1.0 AS a", numRecords=10];
+
+g2 = generate[output="RECORDCOUNT/3 + 0.0 AS b", numRecords=20];
+
+j = hash_join[tableKey="a", probeKey="b"];
+g1 -> j;
+g2 -> j;
+
+p = sort[key="a", key="b"];
+j -> p;
+
+d = write[file="output.txt", mode="text"];
+p -> d;

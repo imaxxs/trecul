@@ -1,0 +1,13 @@
+/**
+ * A sort merge in an interleaving pattern with INTEGER
+ */
+g1 = generate[output="CAST(2*RECORDCOUNT AS INTEGER) AS a", numRecords=10];
+
+g2 = generate[output="CAST(2*RECORDCOUNT+1 AS INTEGER) AS a", numRecords=10];
+
+m = sort_merge[key="a"];
+g1 -> m;
+g2 -> m;
+
+w = write[file="output.txt", mode="text"];
+m -> w;

@@ -1,0 +1,13 @@
+/**
+ * A sort merge in an interleaving pattern with CHAR
+ */
+g1 = read[file="input1.txt", format="a CHAR(4)", mode="text"];
+
+g2 = read[file="input2.txt", format="a CHAR(4)", mode="text"];
+
+m = sort_merge[key="a"];
+g1 -> m;
+g2 -> m;
+
+w = write[file="output.txt", mode="text"];
+m -> w;

@@ -1,0 +1,5 @@
+/* Test that we can read text files with comments.
+ */
+a = read[file="simple_text.txt", format="a INTEGER, b BIGINT, c DECIMAL, e VARCHAR, f CHAR(8), g DATETIME, h DATE", mode="text", comment="#"];
+d = write[file="output.txt", mode="text"];
+a -> d;

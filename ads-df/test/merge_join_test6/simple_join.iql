@@ -1,0 +1,13 @@
+/**
+ * A simple many to many inner join on a DATETIME key
+ */
+g1 = generate[output="CAST('2011-05-23 23:57:21' AS DATETIME) + INTERVAL CAST(RECORDCOUNT AS INTEGER)/2 DAY AS a", numRecords=10];
+
+g2 = generate[output="CAST('2011-05-23 23:57:21' AS DATETIME) + INTERVAL CAST(RECORDCOUNT AS INTEGER)/3 DAY AS b", numRecords=20];
+
+j = merge_join[leftKey="a", rightKey="b"];
+g1 -> j;
+g2 -> j;
+
+d = write[file="output.txt", mode="text"];
+j -> d;

@@ -1,0 +1,16 @@
+g1 = generate[program="RECORDCOUNT/2 AS a", numRecords=4];
+
+g2 = generate[program="RECORDCOUNT AS b", numRecords=4];
+
+/**
+ * This is actually a cross join.
+ */
+j = hash_join[output="a,b", residual="a<b"];
+g1 -> j;
+g2 -> j;
+
+s = sort[key="a", key="b"];
+j -> s;
+
+d = write[file="output.txt", mode="text"];
+s -> d;

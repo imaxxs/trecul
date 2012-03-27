@@ -1,0 +1,5 @@
+/*  This tests reading a format from a file.
+ */
+a = read[file="simple_text.txt", formatFile="formatFile.txt", mode="text"];
+d = write[file="output.txt", mode="text"];
+a -> d;
