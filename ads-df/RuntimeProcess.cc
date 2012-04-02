@@ -35,6 +35,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 
+#include "md5.h"
 #include "RuntimeProcess.hh"
 #include "RuntimeOperator.hh"
 #include "RuntimePlan.hh"
@@ -647,6 +648,40 @@ void HadoopSetup::setEnvironment()
   ::setenv("LIBHDFS_OPTS", "-Xmx100m", 0);
 }
 
+/**
+ * Run an ads-df dataflow using Hadoop pipes.
+ *
+ * An ads-df job is run in Hadoop using pipes.  This is
+ * accomplished by having ads-df compile the dataflow plans
+ * and pass them to a slave executable ads-df-pipes that 
+ * runs the plans as a map reduce task.
+ * 
+ * To make upgrades of ads-df easy we have every version
+ * of ads-df upload an appropriate version of ads-df-pipes into
+ * Hadoop.  This makes it possible for multiple versions of
+ * ads-df to coexist on a cluster.  At a minimum this is 
+ * crucial while a cluster is being upgraded; without this
+ * it would be possible to have a version mismatch between the
+ * ads-df that serialized a dataflow plan and an ads-df-pipes
+ * slave that deserializes and executes it.  Much easier than
+ * demanding backward/forward compatibility is to just keep
+ * these versions separate from one another.
+ *
+ * We identify versions of ads-df by taking a checksum of
+ * the ads-df-pipes executable.  This has the advantage that
+ * one doesn't have to manage arbitrary versioning schemes 
+ * and that one is protected from incompatible changes during
+ * a development cycle that don't correspond to a change in any
+ * official release version number.  The big disadvantage of this
+ * upload policy is that developer machines will accumulate a large
+ * quantity of ads-df-pipes executable versions in HDFS and it will
+ * be necessary to purge these on occasion.  An alternative that was
+ * tried was just having ads-df always upload a private "one use
+ * only" copy of ads-df-pipes to HDFS.  It appears that the massively
+ * scalable Hadoop core is incapable of handling this much traffic
+ * in its distributed cache as our entire cluster was crippled after
+ * a couple of days with this upload policy.
+ */
 class AdsPipesJobConf
 {
 private:
@@ -656,6 +691,8 @@ private:
   std::string mName;
   int32_t mNumReducers;
   bool mJvmReuse;
+  boost::filesystem::path mLocalPipesPath;
+  std::string mLocalPipesChecksum;
 
   /**
    * Name of pipes executable in HDFS.  It goes into the
@@ -682,6 +719,11 @@ private:
    */
   void copyPipesExecutableToHDFS();
 
+  /**
+   * MD5 checksum of ads-df-pipes executable on local disk.
+   */
+  static std::string getPipesExecutableChecksum(const boost::filesystem::path & p);
+
 public:
   AdsPipesJobConf(const std::string& jobDir);
   void setMapper(const std::string& m);
@@ -701,6 +743,15 @@ AdsPipesJobConf::AdsPipesJobConf(const std::string& jobDir)
   mNumReducers(0),
   mJvmReuse(true)
 {
+  // We assume that ads-df-pipes is in the same directory
+  // as this exe
+  mLocalPipesPath =
+    Executable::getPath().parent_path()/boost::filesystem::path("ads-df-pipes");
+  if (!boost::filesystem::exists(mLocalPipesPath))
+    throw std::runtime_error((boost::format("Couldn't find ads-df-pipes "
+					    "executable: %1%.  "
+					    "Check installation") % mLocalPipesPath.file_string()).str());
+  mLocalPipesChecksum = getPipesExecutableChecksum(mLocalPipesPath);
 }
 
 void AdsPipesJobConf::setMapper(const std::string& m)
@@ -851,7 +902,7 @@ std::string AdsPipesJobConf::get() const
 
 std::string AdsPipesJobConf::getPipesExecutableName() const
 {
-  return mJobDir + "/bin/ads-df-pipes";
+  return "/a/bin/ads-df-pipes-" + mLocalPipesChecksum;
 }
 
 std::string AdsPipesJobConf::getMapPlanFileName() const
@@ -902,16 +953,7 @@ void AdsPipesJobConf::copyPipesExecutableToHDFS()
     return;
   }
 
-  // We assume that ads-df-pipes is in the same directory
-  // as this exe
-  boost::filesystem::path localPipesPath =
-    Executable::getPath().parent_path()/boost::filesystem::path("ads-df-pipes");
-  if (!boost::filesystem::exists(localPipesPath))
-    throw std::runtime_error((boost::format("Couldn't find ads-df-pipes "
-					    "executable: %1%.  "
-					    "Check installation") % localPipesPath.file_string()).str());
-
-  int32_t ret = copyFromLocal(localPipesPath.file_string(),
+  int32_t ret = copyFromLocal(mLocalPipesPath.file_string(),
 			      pipesPath);
   // We might fail because another process has uploaded the file.
   // Only fail if the file doesn't exist.
@@ -930,6 +972,36 @@ void AdsPipesJobConf::copyFilesToHDFS()
   if (mReducer.size()) {
     copyPlanFileToHDFS(mReducer, getReducePlanFileName());
   }
+}
+
+std::string AdsPipesJobConf::getPipesExecutableChecksum(const boost::filesystem::path & p)
+{
+  static const int32_t bufSz(4096);
+  static const int32_t digestSz(16);
+  uint8_t buf[bufSz];
+  stdio_file_traits::file_type f = 
+    stdio_file_traits::open_for_read(p.file_string().c_str(), 0, 
+				     std::numeric_limits<uint64_t>::max());
+  md5_byte_t md5digest[digestSz];
+  md5_state_t md5sum;
+  ::md5_init(&md5sum);
+  int32_t numRead = 0;
+  do {
+    numRead = stdio_file_traits::read(f, &buf[0], bufSz);
+    ::md5_append(&md5sum, (const md5_byte_t *) &buf[0], numRead);
+  } while(numRead == bufSz);
+  ::md5_finish(&md5sum, md5digest);
+  stdio_file_traits::close(f);
+
+  static const char hexDigits [] = {'0','1','2','3','4','5','6','7',
+				    '8','9','a','b','c','d','e','f'};
+  char output[2*digestSz];
+  for(int32_t i=0; i<digestSz; i++) {
+    output[2*i] = hexDigits[(md5digest[i]&0xf0) >> 4];
+    output[2*i+1] = hexDigits[md5digest[i]&0x0f];
+  }
+  
+  return std::string(&output[0], &output[32]);
 }
 
 void PlanRunner::createSerialized64PlanFromFile(const std::string& f,
