@@ -68,6 +68,31 @@ returnsDecl[IQLTreeFactoryRef ctxt]
         ^(TK_RETURNS builtInType[$ctxt])
         ;
 
+recordConstructor[IQLTreeFactoryRef ctxt] returns [IQLRecordConstructorRef ctor]
+@init {
+    IQLFieldConstructorListRef fields = IQLFieldConstructorListCreate($ctxt);
+}
+@after {
+    IQLFieldConstructorListFree($ctxt, fields);
+}
+    :
+        (f = fieldConstructor[$ctxt] { IQLFieldConstructorListAppend($ctxt, fields, f); } )+ { $ctor = IQLBuildRecord($ctxt, fields); }
+    ;
+
+fieldConstructor[IQLTreeFactoryRef ctxt] returns [IQLFieldConstructorRef ctor]
+@init {
+    const char * nm = NULL;
+}
+    :
+    ^(ID '*') { $ctor = IQLBuildAddFields($ctxt, (const char *) $ID.text->chars); }
+    |
+    ^(TK_SET e = expression[$ctxt] (ID {nm = (const char *) $ID.text->chars; })?  { $ctor = IQLBuildAddField($ctxt, nm, e); } )
+    |
+    declareStatement[$ctxt] { /* TODO: Fix */ $ctor = NULL; }
+    |
+    ^(a=QUOTED_ID (b=QUOTED_ID { nm = (const char *) $b.text->chars; })?) { $ctor = IQLBuildQuotedId($ctxt, (const char *) $a.text->chars, nm); }
+    ;
+
 localVarOrId
     :
     ID
@@ -83,6 +108,7 @@ statement[IQLTreeFactoryRef ctxt]
 	(
 	setStatement[$ctxt]
 	| variableDeclaration[$ctxt]
+	| declareStatement[$ctxt]
 	| printStatement[$ctxt]
 	| ifStatement[$ctxt]
 	| statementBlock[$ctxt]
@@ -216,6 +242,7 @@ expression[IQLTreeFactoryRef ctxt] returns [IQLExpressionRef e]
     | ^(t=TK_MAX e1=expression[$ctxt] { $e = IQLBuildUnaryFun($ctxt, "MAX", e1, $t->getLine($t), $t->getCharPositionInLine($t)); } )
     | ^(t=TK_MIN e1=expression[$ctxt] { $e = IQLBuildUnaryFun($ctxt, "MIN", e1, $t->getLine($t), $t->getCharPositionInLine($t)); } )
     | ^(t=TK_INTERVAL fun=ID e1=expression[$ctxt] { $e = IQLBuildInterval($ctxt, (const char *)$fun.text->chars, e1, $t->getLine($t), $t->getCharPositionInLine($t)); })
+    | ^(t=ARRAY { l = IQLExpressionListCreate($ctxt); } (e1=expression[$ctxt] { IQLExpressionListAppend($ctxt, l, e1); })* { $e = IQLBuildArray($ctxt, l, $t->getLine($t), $t->getCharPositionInLine($t)); IQLExpressionListFree($ctxt, l); })
     ;    
 
 whenExpression[IQLTreeFactoryRef ctxt, IQLExpressionListRef l]

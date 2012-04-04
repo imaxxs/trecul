@@ -46,6 +46,7 @@
 
 #define BOOST_TEST_MODULE MyTest
 #include <boost/test/unit_test.hpp>
+#include <boost/test/floating_point_comparison.hpp>
 
 boost::shared_ptr<RecordType> createLogInputType(DynamicRecordContext & ctxt)
 {
@@ -206,6 +207,29 @@ BOOST_AUTO_TEST_CASE(testNativeAST)
   //   CastExpr * castExpr = static_cast<CastExpr *>(ast);
   //   BOOST_CHECK_EQUAL(Int64Type::Get(ctxt), castExpr->getCastType());
   // }
+}
+
+BOOST_AUTO_TEST_CASE(testRecordConstructorNativeAST)
+{
+  DynamicRecordContext ctxt;
+  {
+    IQLRecordConstructor * ast = RecordTypeTransfer::getAST(ctxt, "a AS b, c AS d");
+    BOOST_CHECK_EQUAL(2U, ast->size_fields());
+    IQLNamedExpression * e = dynamic_cast<IQLNamedExpression *>(*(ast->begin_fields()));
+    BOOST_CHECK(NULL != e);
+    BOOST_CHECK(boost::algorithm::equals("b", e->getName()));
+    IQLExpression * expr = e->getExpression();
+    BOOST_CHECK(NULL != expr);
+    BOOST_CHECK_EQUAL(IQLExpression::VARIABLE, expr->getNodeType());
+    BOOST_CHECK(boost::algorithm::equals("a", expr->getStringData()));
+    e = dynamic_cast<IQLNamedExpression *>(*(ast->begin_fields()+1));
+    BOOST_CHECK(NULL != e);
+    BOOST_CHECK(boost::algorithm::equals("d", e->getName()));
+    expr = e->getExpression();
+    BOOST_CHECK(NULL != expr);
+    BOOST_CHECK_EQUAL(IQLExpression::VARIABLE, expr->getNodeType());
+    BOOST_CHECK(boost::algorithm::equals("c", expr->getStringData()));
+  }
 }
 
 BOOST_AUTO_TEST_CASE(testEquiJoinDetector)
@@ -444,6 +468,76 @@ BOOST_AUTO_TEST_CASE(testSplitPredicateRule)
   }
 }
 
+BOOST_AUTO_TEST_CASE(testASTEquals)
+{
+  DynamicRecordContext ctxt;
+
+  {
+    IQLExpression * ast = RecordTypeFunction::getAST(ctxt, "2*10 + 0 + 3*(6+0)");
+    IQLExpression * expected = RecordTypeFunction::getAST(ctxt, "2*10 + 0 + 3*(6+0)");
+    BOOST_CHECK(ast->equals(expected));
+  }
+
+  {
+    IQLExpression * ast = RecordTypeFunction::getAST(ctxt, "2*10 + 0 + 3*(6+0)");
+    IQLExpression * expected = RecordTypeFunction::getAST(ctxt, "((2*10) + 0) + 3*(6+0)");
+    BOOST_CHECK(ast->equals(expected));
+  }
+
+  {
+    IQLExpression * ast = RecordTypeFunction::getAST(ctxt, "2*10 + 0 + 3*(6+0)");
+    IQLExpression * expected = RecordTypeFunction::getAST(ctxt, "2*10 + 3*6");
+    BOOST_CHECK(!ast->equals(expected));
+  }
+
+  {
+    IQLExpression * ast = RecordTypeFunction::getAST(ctxt, "CASE WHEN exp(a) > 0 THEN 1 ELSE b END");
+    IQLExpression * expected = RecordTypeFunction::getAST(ctxt, "CASE WHEN             "
+							  "exp(a) > 0 THEN 1 ELSE     b END");
+    BOOST_CHECK(ast->equals(expected));
+  }
+
+  {
+    IQLExpression * ast = RecordTypeFunction::getAST(ctxt, "CASE WHEN exp(a) > 0 THEN 1 ELSE b END");
+    IQLExpression * expected = RecordTypeFunction::getAST(ctxt, "CASE WHEN exp(c) > 0 THEN 1 ELSE b END");
+    BOOST_CHECK(!ast->equals(expected));
+  }
+}
+
+BOOST_AUTO_TEST_CASE(testPrintExpression)
+{
+  DynamicRecordContext ctxt;
+
+  {
+    IQLExpression * ast = RecordTypeFunction::getAST(ctxt, "2*10 + 0 + 3*(6+0)");
+    std::stringstream ss;
+    IQLExpressionPrinter p (ss, ast);
+    std::string expected("(((2)*(10))+(0))+((3)*((6)+(0)))");
+    BOOST_CHECK(boost::algorithm::equals(ss.str(), expected));
+  }
+  {
+    IQLExpression * ast = RecordTypeFunction::getAST(ctxt, "CASE WHEN a THEN b WHEN c THEN d ELSE e END");
+    std::stringstream ss;
+    IQLExpressionPrinter p (ss, ast);
+    std::string expected("CASE WHEN a THEN b WHEN c THEN d ELSE e END");
+    BOOST_CHECK(boost::algorithm::equals(ss.str(), expected));
+  }
+  {
+    IQLExpression * ast = RecordTypeFunction::getAST(ctxt, "CASE WHEN a<f THEN b WHEN c THEN d ELSE e END");
+    std::stringstream ss;
+    IQLExpressionPrinter p (ss, ast);
+    std::string expected("CASE WHEN (a)<(f) THEN b WHEN c THEN d ELSE e END");
+    BOOST_CHECK(boost::algorithm::equals(ss.str(), expected));
+  }
+  {
+    IQLExpression * ast = RecordTypeFunction::getAST(ctxt, "CASE WHEN a[x]<f[g[y]] THEN b WHEN c THEN d ELSE e END");
+    std::stringstream ss;
+    IQLExpressionPrinter p (ss, ast);
+    std::string expected("CASE WHEN (a[x])<(f[g[y]]) THEN b WHEN c THEN d ELSE e END");
+    BOOST_CHECK(boost::algorithm::equals(ss.str(), expected));
+  }
+}
+
 BOOST_AUTO_TEST_CASE(testRecordTypeBuilder)
 {
   DynamicRecordContext ctxt;
@@ -467,6 +561,206 @@ BOOST_AUTO_TEST_CASE(testRecordTypeBuilder)
   BOOST_CHECK(rt->hasMember("f"));
   BOOST_CHECK(rt->hasMember("g"));
   BOOST_CHECK(rt->hasMember("h"));
+}
+
+BOOST_AUTO_TEST_CASE(testIQLArrayConstructor)
+{
+  DynamicRecordContext ctxt;
+  InterpreterContext runtimeCtxt;
+  std::vector<RecordMember> members;
+  members.push_back(RecordMember("a", CharType::Get(ctxt, 6)));
+  members.push_back(RecordMember("b", VarcharType::Get(ctxt)));
+  members.push_back(RecordMember("c", Int32Type::Get(ctxt)));
+  members.push_back(RecordMember("d", Int64Type::Get(ctxt)));
+  members.push_back(RecordMember("e", DoubleType::Get(ctxt)));
+  RecordType recTy(members);
+
+  RecordBuffer inputBuf = recTy.GetMalloc()->malloc();
+  recTy.setChar("a", "123456", inputBuf);
+  recTy.setVarchar("b", "abcdefghijklmnop", inputBuf);
+  recTy.setInt32("c", 9923432, inputBuf);
+  recTy.setInt64("d", 1239923432, inputBuf);
+  recTy.setDouble("e", 8234.24344, inputBuf);
+
+  {
+    RecordTypeTransfer t1(ctxt, "xfer1", &recTy, 
+			  "[2*c,3*c] AS f");
+    const FieldType * ty = t1.getTarget()->getMember("f").GetType();
+    BOOST_CHECK_EQUAL(FieldType::FIXED_ARRAY, ty->GetEnum());
+    BOOST_CHECK_EQUAL(2, ty->GetSize());
+    const FixedArrayType * arrTy = static_cast<const FixedArrayType *>(ty);
+    BOOST_CHECK_EQUAL(FieldType::INT32, arrTy->getElementType()->GetEnum());    
+    RecordBuffer outputBuf = t1.getTarget()->GetMalloc()->malloc();
+    t1.execute(inputBuf, outputBuf, &runtimeCtxt, false);
+    BOOST_CHECK_EQUAL(2*9923432, t1.getTarget()->getMemberOffset("f").getArrayInt32(outputBuf,0));
+    BOOST_CHECK_EQUAL(3*9923432, t1.getTarget()->getMemberOffset("f").getArrayInt32(outputBuf,1));
+    t1.getTarget()->getFree().free(outputBuf);
+  }
+
+  {
+    // Test an array local, initilizing and setting a value
+    RecordTypeTransfer t1(ctxt, "xfer1", &recTy, 
+			  "DECLARE tmp = [2*c,3*c], tmp AS f");
+    const FieldType * ty = t1.getTarget()->getMember("f").GetType();
+    BOOST_CHECK_EQUAL(FieldType::FIXED_ARRAY, ty->GetEnum());
+    BOOST_CHECK_EQUAL(2, ty->GetSize());
+    const FixedArrayType * arrTy = static_cast<const FixedArrayType *>(ty);
+    BOOST_CHECK_EQUAL(FieldType::INT32, arrTy->getElementType()->GetEnum());    
+    RecordBuffer outputBuf = t1.getTarget()->GetMalloc()->malloc();
+    t1.execute(inputBuf, outputBuf, &runtimeCtxt, false);
+    BOOST_CHECK_EQUAL(2*9923432, t1.getTarget()->getMemberOffset("f").getArrayInt32(outputBuf,0));
+    BOOST_CHECK_EQUAL(3*9923432, t1.getTarget()->getMemberOffset("f").getArrayInt32(outputBuf,1));
+    t1.getTarget()->getFree().free(outputBuf);
+  }
+
+  {
+    // Test an initialized array local and indexing
+    RecordTypeTransfer t1(ctxt, "xfer1", &recTy, 
+			  "DECLARE tmp = [2*c,3*c], tmp[0] AS f, tmp[1] AS g");
+    const FieldType * ty = t1.getTarget()->getMember("f").GetType();
+    BOOST_CHECK_EQUAL(FieldType::INT32, ty->GetEnum());
+    ty = t1.getTarget()->getMember("g").GetType();
+    BOOST_CHECK_EQUAL(FieldType::INT32, ty->GetEnum());
+    RecordBuffer outputBuf = t1.getTarget()->GetMalloc()->malloc();
+    t1.execute(inputBuf, outputBuf, &runtimeCtxt, false);
+    BOOST_CHECK_EQUAL(2*9923432, t1.getTarget()->getMemberOffset("f").getInt32(outputBuf));
+    BOOST_CHECK_EQUAL(3*9923432, t1.getTarget()->getMemberOffset("g").getInt32(outputBuf));
+    t1.getTarget()->getFree().free(outputBuf);
+  }
+
+  {
+    // Test an initialized const array local and indexing
+    RecordTypeTransfer t1(ctxt, "xfer1", &recTy, 
+			  "DECLARE tmp = [2,3], tmp[0]*c AS f, tmp[1]*c AS g");
+    const FieldType * ty = t1.getTarget()->getMember("f").GetType();
+    BOOST_CHECK_EQUAL(FieldType::INT32, ty->GetEnum());
+    ty = t1.getTarget()->getMember("g").GetType();
+    BOOST_CHECK_EQUAL(FieldType::INT32, ty->GetEnum());
+    RecordBuffer outputBuf = t1.getTarget()->GetMalloc()->malloc();
+    t1.execute(inputBuf, outputBuf, &runtimeCtxt, false);
+    BOOST_CHECK_EQUAL(2*9923432, t1.getTarget()->getMemberOffset("f").getInt32(outputBuf));
+    BOOST_CHECK_EQUAL(3*9923432, t1.getTarget()->getMemberOffset("g").getInt32(outputBuf));
+    t1.getTarget()->getFree().free(outputBuf);
+  }
+
+  {
+    // Test an initialized const array local and indexing
+    RecordTypeTransfer t1(ctxt, "xfer1", &recTy, 
+			  "DECLARE tmp = [2.0e+00,3.0e+00], tmp[0]*e AS f, tmp[1]*e AS g");
+    const FieldType * ty = t1.getTarget()->getMember("f").GetType();
+    BOOST_CHECK_EQUAL(FieldType::DOUBLE, ty->GetEnum());
+    ty = t1.getTarget()->getMember("g").GetType();
+    BOOST_CHECK_EQUAL(FieldType::DOUBLE, ty->GetEnum());
+    RecordBuffer outputBuf = t1.getTarget()->GetMalloc()->malloc();
+    t1.execute(inputBuf, outputBuf, &runtimeCtxt, false);
+    BOOST_CHECK_EQUAL(2*8234.24344, t1.getTarget()->getMemberOffset("f").getDouble(outputBuf));
+    BOOST_CHECK_EQUAL(3*8234.24344, t1.getTarget()->getMemberOffset("g").getDouble(outputBuf));
+    t1.getTarget()->getFree().free(outputBuf);
+  }
+
+  // TODO: Test arrays of VARCHAR and make sure there aren't memory issues.
+
+  recTy.GetFree()->free(inputBuf);
+}
+
+BOOST_AUTO_TEST_CASE(testIQLArrayDotProduct)
+{
+  DynamicRecordContext ctxt;
+  InterpreterContext runtimeCtxt;
+  std::vector<RecordMember> members;
+  members.push_back(RecordMember("a", DoubleType::Get(ctxt)));
+  members.push_back(RecordMember("b", DoubleType::Get(ctxt)));
+  members.push_back(RecordMember("c", DoubleType::Get(ctxt)));
+  members.push_back(RecordMember("d", DoubleType::Get(ctxt)));
+  members.push_back(RecordMember("e", DoubleType::Get(ctxt)));
+  RecordType recTy(members);
+  std::vector<RecordMember> rhsMembers;
+  RecordType rhsTy(rhsMembers);
+  std::vector<const RecordType *> types;
+  types.push_back(&recTy);
+  types.push_back(&rhsTy);
+
+  RecordBuffer inputBuf = recTy.GetMalloc()->malloc();
+  recTy.setDouble("a", 0.1223, inputBuf);
+  recTy.setDouble("b", 0.5623, inputBuf);
+  recTy.setDouble("c", 0.1111, inputBuf);
+  recTy.setDouble("d", 8234.24344, inputBuf);
+  recTy.setDouble("e", 8234.24344, inputBuf);
+
+  // Should the be the EXACT same?
+  double expected = 0.0;
+  expected += 4.456*0.1223;
+  expected += 3.89*0.5623;
+  expected += -1.934*0.1111;
+
+  {
+    RecordTypeInPlaceUpdate up(ctxt, 
+			       "xfer5up", 
+			       types, 
+			       "DECLARE w = [4.456e+00,3.89e+00,-1.934e+00];\n"
+			       "DECLARE accum = 0.0e+00;\n"
+			       "DECLARE i = 2;\n"
+			       "WHILE i >= 0 DO\n"
+			       "SET accum = accum + w[i]*a[i];\n"
+			       "SET i = i-1;\n"
+			       "END WHILE\n"
+			       "SET e=accum;");
+    up.execute(inputBuf, NULL, &runtimeCtxt);
+    BOOST_CHECK_CLOSE(expected, 
+		      recTy.getDouble("e", inputBuf),
+		      0.00000000001);
+  }
+
+
+  // TODO: Test arrays of VARCHAR and make sure there aren't memory issues.
+
+  recTy.GetFree()->free(inputBuf);
+}
+
+BOOST_AUTO_TEST_CASE(testIQLMultipleWhile)
+{
+  DynamicRecordContext ctxt;
+  InterpreterContext runtimeCtxt;
+  std::vector<RecordMember> members;
+  members.push_back(RecordMember("a", Int32Type::Get(ctxt)));
+  members.push_back(RecordMember("b", Int32Type::Get(ctxt)));
+  members.push_back(RecordMember("c", Int32Type::Get(ctxt)));
+  members.push_back(RecordMember("d", Int32Type::Get(ctxt)));
+  members.push_back(RecordMember("y", Int32Type::Get(ctxt)));
+  RecordType recTy(members);
+  std::vector<RecordMember> rhsMembers;
+  RecordType rhsTy(rhsMembers);
+  std::vector<const RecordType *> types;
+  types.push_back(&recTy);
+  types.push_back(&rhsTy);
+
+  RecordBuffer lhs = recTy.GetMalloc()->malloc();
+  recTy.setInt32("a", 3, lhs);
+  recTy.setInt32("b", 92344, lhs);
+  recTy.setInt32("c", 9923432, lhs);
+  recTy.setInt32("d", 2, lhs);
+  recTy.setInt32("y", 88823, lhs);
+
+  {
+    RecordTypeInPlaceUpdate up(ctxt, 
+			       "xfer5up", 
+			       types, 
+			       "WHILE a > 0 DO\n"
+			       "SET b = b + 1;\n" 
+			       "SET a = a - 1;\n"
+			       "END WHILE\n"
+			       "WHILE d > 0 DO\n"
+			       "SET y = y + 1;\n" 
+			       "SET d = d - 1;\n"
+			       "END WHILE"
+			       );
+    up.execute(lhs, NULL, &runtimeCtxt);
+    BOOST_CHECK_EQUAL(0, recTy.getInt32("a", lhs));
+    BOOST_CHECK_EQUAL(92347, recTy.getInt32("b", lhs));
+    BOOST_CHECK_EQUAL(9923432, recTy.getInt32("c", lhs));
+    BOOST_CHECK_EQUAL(0, recTy.getInt32("d", lhs));
+    BOOST_CHECK_EQUAL(88825, recTy.getInt32("y", lhs));
+  }
 }
 
 BOOST_AUTO_TEST_CASE(testIQLRecordHash)
@@ -1276,6 +1570,93 @@ BOOST_AUTO_TEST_CASE(testIQLArray)
 			       "SET c = a[1]");
     up.execute(lhs, NULL, &runtimeCtxt);
     BOOST_CHECK_EQUAL(88311, recTy.getInt32("c", lhs));
+  }
+}
+
+BOOST_AUTO_TEST_CASE(testIQLWhile)
+{
+  DynamicRecordContext ctxt;
+  InterpreterContext runtimeCtxt;
+  std::vector<RecordMember> members;
+  members.push_back(RecordMember("a", Int32Type::Get(ctxt)));
+  members.push_back(RecordMember("b", Int32Type::Get(ctxt)));
+  members.push_back(RecordMember("c", Int32Type::Get(ctxt)));
+  members.push_back(RecordMember("d", Int32Type::Get(ctxt)));
+  members.push_back(RecordMember("y", Int32Type::Get(ctxt)));
+  RecordType recTy(members);
+  std::vector<RecordMember> rhsMembers;
+  RecordType rhsTy(rhsMembers);
+  std::vector<const RecordType *> types;
+  types.push_back(&recTy);
+  types.push_back(&rhsTy);
+
+  RecordBuffer lhs = recTy.GetMalloc()->malloc();
+  recTy.setInt32("a", 3, lhs);
+  recTy.setInt32("b", 92344, lhs);
+  recTy.setInt32("c", 9923432, lhs);
+  recTy.setInt32("d", 12431, lhs);
+  recTy.setInt32("y", 88823, lhs);
+
+  {
+    RecordTypeInPlaceUpdate up(ctxt, 
+			       "xfer5up", 
+			       types, 
+			       "WHILE a > 0 DO SET b = b + 1; SET a = a - 1; END WHILE");
+    up.execute(lhs, NULL, &runtimeCtxt);
+    BOOST_CHECK_EQUAL(0, recTy.getInt32("a", lhs));
+    BOOST_CHECK_EQUAL(92347, recTy.getInt32("b", lhs));
+    BOOST_CHECK_EQUAL(9923432, recTy.getInt32("c", lhs));
+  }
+  {
+    RecordTypeInPlaceUpdate up(ctxt, 
+			       "xfer5up", 
+			       types, 
+			       "WHILE a > 0 DO SET b = b + 1; SET c = c+1; SET a = a-1; END WHILE");
+    recTy.setInt32("a", 3, lhs);
+    recTy.setInt32("b", 92344, lhs);
+    up.execute(lhs, NULL, &runtimeCtxt);
+    BOOST_CHECK_EQUAL(0, recTy.getInt32("a", lhs));
+    BOOST_CHECK_EQUAL(92347, recTy.getInt32("b", lhs));
+    BOOST_CHECK_EQUAL(9923435, recTy.getInt32("c", lhs));
+  }
+  {
+    RecordTypeInPlaceUpdate up(ctxt, 
+			       "xfer5up", 
+			       types, 
+			       "DECLARE i INTEGER\n"
+			       "SET i = 5;\n"
+			       "WHILE i > 0 DO\n"
+			       "SET b = b + 1;\n"
+			       "SET c = c+1;\n"
+			       "SET a = a-1;\n"
+			       "SET i = i-1;\n"
+			       "END WHILE");
+    recTy.setInt32("a", 3, lhs);
+    recTy.setInt32("b", 92344, lhs);
+    recTy.setInt32("c", 9923432, lhs);
+    up.execute(lhs, NULL, &runtimeCtxt);
+    BOOST_CHECK_EQUAL(-2, recTy.getInt32("a", lhs));
+    BOOST_CHECK_EQUAL(92349, recTy.getInt32("b", lhs));
+    BOOST_CHECK_EQUAL(9923437, recTy.getInt32("c", lhs));
+  }
+  try {
+    // We didn't make DO a keyword so there is subtlety in the parser.
+    // Check it here.
+    RecordTypeInPlaceUpdate up(ctxt, 
+			       "xfer5up", 
+			       types, 
+			       "WHILE a > 0 DONT SET b = b + 1 END WHILE");
+    BOOST_CHECK(false);
+  } catch(std::exception& ) {
+  }
+  try {
+    // Check that we need a BOOLEAN predicate.
+    RecordTypeInPlaceUpdate up(ctxt, 
+			       "xfer5up", 
+			       types, 
+			       "WHILE 6666LL DO SET b = b + 1 END WHILE");
+    BOOST_CHECK(false);
+  } catch(std::exception& ) {
   }
 }
 

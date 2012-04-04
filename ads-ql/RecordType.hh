@@ -157,13 +157,25 @@ public:
   {
     return *(int32_t *) (buffer.Ptr + mOffset);
   }
+  int32_t getArrayInt32(RecordBuffer buffer, int idx) const
+  {
+    return ((int32_t *) (buffer.Ptr + mOffset))[idx];
+  }
   int64_t getInt64(RecordBuffer buffer) const
   {
     return *(int64_t *) (buffer.Ptr + mOffset);
   }
+  int64_t getArrayInt64(RecordBuffer buffer, int idx) const
+  {
+    return ((int64_t *) (buffer.Ptr + mOffset))[idx];
+  }
   double getDouble(RecordBuffer buffer) const
   {
     return *(double *) (buffer.Ptr + mOffset);
+  }
+  int32_t getArrayDouble(RecordBuffer buffer, int idx) const
+  {
+    return ((double *) (buffer.Ptr + mOffset))[idx];
   }
   boost::posix_time::ptime getDatetime(RecordBuffer buffer) const
   {
@@ -323,12 +335,14 @@ class DynamicRecordContext
 private:
   std::map<Digest, FieldType *> mTypes;
   std::set<const RecordType *> mRecords;
+  std::set<class IQLExpression *> mExprs;
 public:
   DynamicRecordContext();
   ~DynamicRecordContext();
   FieldType * lookup(const Digest& id) const;
   void add(const Digest& id, FieldType * val);
   void add(const RecordType * ty);
+  void add(class IQLExpression * expr);
 };
 
 class FieldType
@@ -343,6 +357,7 @@ public:
 		       DATETIME, /* Boost datetime */
 		       DATE, /* Boost gregorian date */
 		       FUNCTION, /* Function types are NOT allowed as fields at this point. */
+		       FIXED_ARRAY, /* Fixed Length Array. */
 		       INTERVAL, /* Interval types */
 		       NIL /* Type of literal NULL */
   };
@@ -387,7 +402,7 @@ public:
 
   // TODO: Convert the following into double dispatch calls 
   // as they depend on the actual field type and the system architecture.
-  std::size_t GetAlignment() const 
+  virtual std::size_t GetAlignment() const 
   {
     switch(mType) {
     case VARCHAR:
@@ -414,7 +429,7 @@ public:
       throw std::runtime_error((boost::format("Invalid Type value: %1%") % mType).str());
     }
   }
-  std::size_t GetAllocSize() const
+  virtual std::size_t GetAllocSize() const
   {
     switch(mType) {
     case VARCHAR:
@@ -442,7 +457,7 @@ public:
     }
   }
 
-  llvm::Type * LLVMGetType(CodeGenerationContext * ctxt) const;
+  virtual llvm::Type * LLVMGetType(CodeGenerationContext * ctxt) const;
 
   /**
    * Append my state to an md5 hash
@@ -735,6 +750,55 @@ public:
    * Text representation of type.
    */
   std::string toString() const;
+};
+
+/**
+ * A fixed length array.
+ */
+class FixedArrayType : public FieldType
+{
+private:
+  const FieldType * mElementTy;
+
+  FixedArrayType(DynamicRecordContext& ctxt, 
+		 int32_t sz,
+		 const FieldType * elementTy,
+		 bool nullable)
+    :
+    FieldType(ctxt, FieldType::FIXED_ARRAY, sz, nullable),    
+    mElementTy(elementTy)
+  {
+  }
+  static void AppendTo(int32_t sz, const FieldType * element,
+		       bool nullable, struct md5_state_s * md5);
+public:
+  static FixedArrayType * Get(DynamicRecordContext& ctxt, 
+			      int32_t sz,
+			      const FieldType * element,
+			      bool nullable);
+  ~FixedArrayType();
+  const FieldType * getElementType() const 
+  {
+    return mElementTy;
+  }
+  std::size_t GetAlignment() const 
+  {
+    return mElementTy->GetAlignment();
+  }
+  std::size_t GetAllocSize() const
+  {
+    return mElementTy->GetAllocSize()*((std::size_t)GetSize());
+  }
+  /**
+   * Append my state to an md5 hash
+   */
+  void AppendTo(struct md5_state_s * md5) const;
+  /**
+   * Text representation of type.
+   */
+  std::string toString() const;
+
+  llvm::Type * LLVMGetType(CodeGenerationContext * ctxt) const;
 };
 
 class IntervalType : public FieldType

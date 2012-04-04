@@ -53,6 +53,7 @@ statement[IQLCodeGenerationContextRef ctxt]
 	(
 	setStatement[$ctxt]
 	| variableDeclaration[$ctxt]
+	| declareStatement[$ctxt]
 	| printStatement[$ctxt]
 	| ifStatement[$ctxt]
 	| statementBlock[$ctxt]
@@ -113,7 +114,7 @@ statementBlock[IQLCodeGenerationContextRef ctxt]
 
 whileStatement[IQLCodeGenerationContextRef ctxt]
 	:
-	^(TK_WHILE expression[$ctxt] statement[$ctxt])
+	^(TK_WHILE { IQLToLLVMWhileBegin($ctxt); } e = expression[$ctxt] { IQLToLLVMWhileStatementBlock($ctxt, e.llvmVal, $e.start->u); } statementBlock[$ctxt] { IQLToLLVMWhileFinish($ctxt); } )
 	;
 
 singleExpression[IQLCodeGenerationContextRef ctxt]
@@ -239,6 +240,7 @@ expression[IQLCodeGenerationContextRef ctxt] returns [IQLToLLVMValueRef llvmVal,
     | ^(c=TK_MAX { IQLToLLVMBeginAggregateFunction($ctxt); } e1 = expression[$ctxt] { $llvmVal = IQLToLLVMBuildAggregateFunction($ctxt, (char *) $TK_MAX.text->chars, e1.llvmVal, $c->u); } )
     | ^(c=TK_MIN { IQLToLLVMBeginAggregateFunction($ctxt); } e1 = expression[$ctxt] { $llvmVal = IQLToLLVMBuildAggregateFunction($ctxt, (char *) $TK_MIN.text->chars, e1.llvmVal, $c->u); } )
     | ^(TK_INTERVAL intervalType = ID e1 = expression[$ctxt] { $llvmVal = IQLToLLVMBuildInterval($ctxt, (const char *)$intervalType.text->chars, e1.llvmVal); } )
+    | ^(c=ARRAY { values = IQLToLLVMValueVectorCreate(); } (e1 = expression[$ctxt] { IQLToLLVMValueVectorPushBack(values, e1.llvmVal, $e1.start->u); })* { $llvmVal = IQLToLLVMBuildArray($ctxt, values, $c->u); IQLToLLVMValueVectorFree(values); })
     ;    
 
 whenExpression[IQLCodeGenerationContextRef ctxt, void * attr]

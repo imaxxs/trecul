@@ -511,6 +511,163 @@ void CodeGenerationContext::addInputRecordType(const char * name,
   recordTypes[name] = std::make_pair(argumentName, rec);
 }
 
+void CodeGenerationContext::whileBegin()
+{
+  // Unwrap to C++
+  llvm::LLVMContext * c = llvm::unwrap(LLVMContext);
+  llvm::IRBuilder<> * b = llvm::unwrap(LLVMBuilder);
+  // The function we are working on.
+  llvm::Function *TheFunction = b->GetInsertBlock()->getParent();
+  // Create blocks for the condition, loop body and continue.
+  std::stack<class IQLToLLVMStackRecord* > & stk(IQLStack);
+  stk.push(new IQLToLLVMStackRecord());
+  stk.top()->ThenBB = llvm::BasicBlock::Create(*c, "whileCond", TheFunction);
+  stk.top()->ElseBB = llvm::BasicBlock::Create(*c, "whileBody");
+  stk.top()->MergeBB = llvm::BasicBlock::Create(*c, "whileCont");
+
+  // We do an unconditional branch to the condition block
+  // so the loop has somewhere to branch to.
+  b->CreateBr(stk.top()->ThenBB);
+  b->SetInsertPoint(stk.top()->ThenBB);  
+}
+
+void CodeGenerationContext::whileStatementBlock(const IQLToLLVMValue * condVal,
+						const FieldType * condTy)
+{  
+  // Test the condition and branch 
+  llvm::IRBuilder<> * b = llvm::unwrap(LLVMBuilder);
+  llvm::Function * f = b->GetInsertBlock()->getParent();
+  std::stack<class IQLToLLVMStackRecord* > & stk(IQLStack);
+  f->getBasicBlockList().push_back(stk.top()->ElseBB);
+  conditionalBranch(condVal, condTy, stk.top()->ElseBB, stk.top()->MergeBB);
+  b->SetInsertPoint(stk.top()->ElseBB);
+}
+
+void CodeGenerationContext::whileFinish()
+{
+  // Unwrap to C++
+  llvm::IRBuilder<> * b = llvm::unwrap(LLVMBuilder);
+  llvm::Function * f = b->GetInsertBlock()->getParent();
+  std::stack<class IQLToLLVMStackRecord* > & stk(IQLStack);
+
+  // Branch to reevaluate loop predicate
+  b->CreateBr(stk.top()->ThenBB);
+  f->getBasicBlockList().push_back(stk.top()->MergeBB);
+  b->SetInsertPoint(stk.top()->MergeBB);
+
+  // Done with this entry
+  delete stk.top();
+  stk.pop();
+}
+
+void CodeGenerationContext::conditionalBranch(const IQLToLLVMValue * condVal,
+					      const FieldType * condTy,
+					      llvm::BasicBlock * trueBranch,
+					      llvm::BasicBlock * falseBranch)
+{
+  llvm::LLVMContext * c = llvm::unwrap(LLVMContext);
+  llvm::IRBuilder<> * b = llvm::unwrap(LLVMBuilder);
+  llvm::Function * f = b->GetInsertBlock()->getParent();
+  
+  // Handle ternary logic here
+  llvm::Value * nv = condVal->getNull();
+  if (nv) {
+    llvm::BasicBlock * notNullBB = llvm::BasicBlock::Create(*c, "notNull", f);
+    b->CreateCondBr(b->CreateNot(nv), notNullBB, falseBranch);
+    b->SetInsertPoint(notNullBB);
+  }
+  // Cast back to i1 by comparing to zero.
+  llvm::Value * boolVal = b->CreateICmpNE(llvm::unwrap(condVal->getValue()),
+					  b->getInt32(0),
+					  "boolCast");
+  // Branch and set block
+  b->CreateCondBr(boolVal, trueBranch, falseBranch);
+}
+
+const IQLToLLVMValue * 
+CodeGenerationContext::buildArray(std::vector<const IQLToLLVMValue *>& vals,
+				  const FieldType * arrayTy)
+{
+  // Detect if this is an array of constants
+  // TODO: We need analysis or attributes that tell us whether the
+  // array is const before we can make it static.  Right now we are just
+  // making an generally invalid assumption that an array of numeric
+  // constants is in fact const.
+  bool isConstArray=true;
+  for(std::vector<const IQLToLLVMValue *>::iterator v = vals.begin(),
+	e = vals.end(); v != e; ++v) {
+    if (!llvm::isa<llvm::Constant>(llvm::unwrap((*v)->getValue()))) {
+      isConstArray = false;
+      break;
+    }
+  }
+
+  if (isConstArray) {
+    return buildGlobalConstArray(vals, arrayTy);
+  }
+
+  // TODO: This is potentially inefficient.  Will LLVM remove the extra copy?
+  // Even if it does, how much are we adding to the compilation time while
+  // it cleans up our mess.
+  llvm::LLVMContext * c = llvm::unwrap(LLVMContext);
+  llvm::IRBuilder<> * b = llvm::unwrap(LLVMBuilder);
+  llvm::Type * retTy = arrayTy->LLVMGetType(this);
+  LLVMValueRef result = LLVMCreateEntryBlockAlloca(this, 
+						   llvm::wrap(retTy),
+						   "nullableBinOp");    
+  const llvm::Type * ptrToElmntTy = llvm::cast<llvm::SequentialType>(retTy)->getElementType();
+  ptrToElmntTy = llvm::PointerType::get(ptrToElmntTy, 0);
+  llvm::Value * ptrToElmnt = b->CreateBitCast(llvm::unwrap(result), ptrToElmntTy);
+  // TODO: We are not allowing nullable element types for arrays at this point.
+  int32_t sz = arrayTy->GetSize();
+  for (int32_t i=0; i<sz; ++i) {
+    // Make an LValue out of a slot in the array so we can
+    // set the value into it.
+
+    // GEP to get pointer to the correct offset.
+    llvm::Value * gepIndexes[1] = { b->getInt64(i) };
+    llvm::Value * lval = b->CreateInBoundsGEP(ptrToElmnt, &gepIndexes[0], 
+					      &gepIndexes[1]);
+    const IQLToLLVMValue * slot = unwrap(IQLToLLVMValue::get(this, 
+							     llvm::wrap(lval),
+							     IQLToLLVMValue::eLocal));
+    IQLToLLVMLocal localLVal(slot, NULL);
+    IQLToLLVMBuildSetNullableValue(this, &localLVal, wrap(vals[i]));
+  }
+
+  // return pointer to array
+  return unwrap(IQLToLLVMValue::get(this, result, IQLToLLVMValue::eLocal));
+}
+
+const IQLToLLVMValue * 
+CodeGenerationContext::buildGlobalConstArray(std::vector<const IQLToLLVMValue *>& vals,
+					     const FieldType * arrayTy)
+{
+  llvm::Module * m = llvm::unwrap(LLVMModule);
+  llvm::LLVMContext * c = llvm::unwrap(LLVMContext);
+  llvm::IRBuilder<> * b = llvm::unwrap(LLVMBuilder);
+  const llvm::ArrayType * arrayType = 
+    llvm::dyn_cast<llvm::ArrayType>(arrayTy->LLVMGetType(this));
+  BOOST_ASSERT(arrayType != NULL);
+  llvm::GlobalVariable * globalArray = 
+    new llvm::GlobalVariable(*m, arrayType, true, llvm::GlobalValue::InternalLinkage,
+			  0, "constArray");
+  globalArray->setAlignment(16);
+
+  // Make initializer for the global.
+  std::vector<llvm::Constant *> initializerArgs;
+  for(std::vector<const IQLToLLVMValue *>::const_iterator v = vals.begin(),
+	e = vals.end(); v != e; ++v) {
+    initializerArgs.push_back(llvm::cast<llvm::Constant>(llvm::unwrap((*v)->getValue())));
+  }
+  llvm::Constant * constArrayInitializer = 
+    llvm::ConstantArray::get(arrayType, initializerArgs);
+  globalArray->setInitializer(constArrayInitializer);
+
+  
+  return unwrap(IQLToLLVMValue::get(this, llvm::wrap(globalArray), IQLToLLVMValue::eLocal));
+}
+
 LLVMSymbolTableRef LLVMSymbolTableCreate()
 {
   return reinterpret_cast<LLVMSymbolTableRef>(new std::map<std::string, IQLToLLVMValueRef>());

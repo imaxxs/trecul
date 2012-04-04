@@ -380,6 +380,26 @@ void TypeCheckContext::beginSwitch(const FieldType * e)
     throw std::runtime_error("Switch expression must be integer");
 }
 
+const FieldType * TypeCheckContext::buildArray(const std::vector<const FieldType *>& e)
+{
+  if (e.size() == 0) 
+    throw std::runtime_error("array expression requires at least one element");
+  const FieldType * elmntTy = e[0];
+  for(std::size_t i=1; i<e.size(); ++i) {
+    const FieldType * tmp = leastCommonTypeNullable(e[i], elmntTy);
+    if (NULL == tmp) {
+      throw std::runtime_error((boost::format("Can't find common type for elements of "
+					      "type %1% and %2% in array") % 
+				elmntTy->toString() % e[i]->toString()).str());
+    }
+    elmntTy = tmp;
+  }
+  if (elmntTy->isNullable()) {
+    throw std::runtime_error("Not yet supporting arrays of nullable types");
+  }
+  return FixedArrayType::Get(mContext, (int32_t) e.size(), elmntTy, false);
+}
+
 const FieldType * TypeCheckContext::buildArrayRef(const char * nm,
 						  const FieldType * idx)
 {
@@ -387,7 +407,16 @@ const FieldType * TypeCheckContext::buildArrayRef(const char * nm,
       idx != Int64Type::Get(mContext))
     throw std::runtime_error("Array index must be integer");
 
-  return unwrap(IQLSymbolTableLookup(TypeCheckSymbolTable, nm));
+  const FieldType * arrayTy = unwrap(IQLSymbolTableLookup(TypeCheckSymbolTable, nm));
+  if (arrayTy->GetEnum() == FieldType::FIXED_ARRAY) {
+    const FieldType * elementTy = static_cast<const FixedArrayType *>(arrayTy)->getElementType();
+    return elementTy;
+  } else {
+    // For backward compatibility we are supporting a hack in which
+    // one is allowed to array ref an arbitrary scalar variable.
+    // This is used in the anrec calculation and should be removed ASAP. 
+    return arrayTy;
+  }
 }
 
 const FieldType * TypeCheckContext::buildModulus(const FieldType * lhs,

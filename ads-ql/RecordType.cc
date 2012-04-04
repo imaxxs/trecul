@@ -49,6 +49,7 @@
 #include "LLVMGen.h"
 #include "CodeGenerationContext.hh"
 #include "RecordType.hh"
+#include "IQLExpression.hh"
 
 #include "decimal128.h"
 #include "md5.h"
@@ -135,6 +136,12 @@ DynamicRecordContext::~DynamicRecordContext()
       ++it) {
     delete *it;
   }
+
+  for(std::set<IQLExpression*>::iterator it = mExprs.begin();
+      it != mExprs.end();
+      ++it) {
+    delete *it;
+  }
 }
 
 FieldType * DynamicRecordContext::lookup(const Digest& id) const
@@ -151,6 +158,11 @@ void DynamicRecordContext::add(const Digest& id, FieldType * val)
 void DynamicRecordContext::add(const RecordType * ty)
 {
   mRecords.insert(ty);
+}
+
+void DynamicRecordContext::add(IQLExpression * expr)
+{
+  mExprs.insert(expr);
 }
 
 llvm::Type * FieldType::LLVMGetType(CodeGenerationContext * ctxt) const
@@ -770,6 +782,54 @@ FunctionType * FunctionType::Get(DynamicRecordContext& ctxt,
 }
 
 FunctionType::~FunctionType()
+{
+}
+
+void FixedArrayType::AppendTo(struct md5_state_s * md5) const
+{
+  AppendTo(GetSize(), mElementTy, isNullable(), md5);
+}
+
+void FixedArrayType::AppendTo(int32_t sz, const FieldType * element,
+			      bool nullable, struct md5_state_s * md5)
+{
+  FieldType::FieldTypeEnum f=FieldType::FIXED_ARRAY;
+  md5_append(md5, (const md5_byte_t *) &f, sizeof(f));
+  md5_append(md5, (const md5_byte_t *) &sz, sizeof(sz));
+  element->AppendTo(md5);
+  md5_append(md5, (const md5_byte_t *) &nullable, sizeof(nullable));
+}
+
+std::string FixedArrayType::toString() const
+{
+  return (boost::format("%1%[%2%]") % mElementTy->toString() % GetSize()).str();
+}
+
+FixedArrayType * FixedArrayType::Get(DynamicRecordContext& ctxt, 
+				     int32_t sz,
+				     const FieldType * element,
+				     bool nullable)
+{
+  FieldType * ft = NULL;
+  md5_state_t md5;
+  md5_init(&md5);
+  AppendTo(sz, element, nullable, &md5);
+  md5_byte_t digest[16];
+  md5_finish(&md5, digest);
+  Digest d(digest);
+  if ((ft=ctxt.lookup(d)) == NULL) {
+    ft = new FixedArrayType(ctxt, sz, element, nullable);
+    ctxt.add(d, ft);
+  }
+  return (FixedArrayType *)ft;
+}
+
+llvm::Type * FixedArrayType::LLVMGetType(CodeGenerationContext * ctxt) const
+{
+  return llvm::ArrayType::get(mElementTy->LLVMGetType(ctxt), (unsigned) GetSize());
+}
+
+FixedArrayType::~FixedArrayType()
 {
 }
 

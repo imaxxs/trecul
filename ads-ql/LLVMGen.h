@@ -256,6 +256,11 @@ extern "C" {
   IQLToLLVMValueRef IQLToLLVMBuildArrayRef(IQLCodeGenerationContextRef ctxt, 
 					   const char * var,
 					   IQLToLLVMValueRef idx);
+  /**
+   * Array constructor
+   */
+  IQLToLLVMValueRef IQLToLLVMBuildArray(IQLCodeGenerationContextRef ctxt, IQLToLLVMValueVectorRef lhs, void * arrayAttrs);
+
 
   /**
    * Construct a CASE expression.
@@ -264,6 +269,15 @@ extern "C" {
   void IQLToLLVMCaseBlockIf(IQLCodeGenerationContextRef ctxt, IQLToLLVMValueRef condVal);
   void IQLToLLVMCaseBlockThen(IQLCodeGenerationContextRef ctxt, IQLToLLVMValueRef value, void * caseAttrs);
   IQLToLLVMValueRef IQLToLLVMCaseBlockFinish(IQLCodeGenerationContextRef ctxt);
+
+  /**
+   * Construct a WHILE statement
+   */
+  void IQLToLLVMWhileBegin(IQLCodeGenerationContextRef ctxt);
+  void IQLToLLVMWhileStatementBlock(IQLCodeGenerationContextRef ctxt, 
+				    IQLToLLVMValueRef condVal, 
+				    void * condAttrs);
+  void IQLToLLVMWhileFinish(IQLCodeGenerationContextRef ctxt);
 
   /**
    * Construct an if/then/else expression
@@ -446,6 +460,7 @@ extern "C" {
   IQLFieldTypeRef IQLTypeCheckBuildInterval(IQLTypeCheckContextRef ctxt, 
 					    const char * intervalType,
 					    IQLFieldTypeRef e);
+  IQLFieldTypeRef IQLTypeCheckArray(IQLTypeCheckContextRef ctxt, IQLFieldTypeVectorRef lhs);
 
   /**
    * Interface for building graphs/plans.

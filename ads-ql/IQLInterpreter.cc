@@ -601,6 +601,10 @@ extern "C" boost::posix_time::ptime datetime_add_year(boost::posix_time::ptime t
   return t + boost::gregorian::years(units);
 }
 
+extern "C" void InternalArrayException() {
+  throw std::runtime_error("Array Bounds Exception");
+}
+
 template <class _T>
 class ANTLR3AutoPtr : boost::noncopyable {
 private:
@@ -1228,6 +1232,10 @@ void LLVMBase::InitializeLLVM()
   funTy = LLVMFunctionType(LLVMDoubleTypeInContext(mContext->LLVMContext), &argumentTypes[0], numArguments, 0);
   libFunVal = ::LoadAndValidateExternalFunction(*this, "exp", funTy);
 
+  numArguments = 0;
+  funTy = LLVMFunctionType(LLVMVoidTypeInContext(mContext->LLVMContext), &argumentTypes[0], numArguments, 0);
+  libFunVal = ::LoadAndValidateExternalFunction(*this, "InternalArrayException", funTy);
+
   // LLVM intrinsics we want to use
   CreateMemcpyIntrinsic();
   CreateMemsetIntrinsic();
@@ -1600,12 +1608,14 @@ private:
   pIQLLexer mLexer;
   pIQLParser mParser;
   pANTLR3_COMMON_TREE_NODE_STREAM mNodes;
+  IQLExpression * mNativeAST;
 
   void initParse(const std::string& transfer);
   void cleanup();
 public:
   IQLParserStuff();
   ~IQLParserStuff();
+  void parseFunction(const std::string& transfer);
   void parseTransfer(const std::string& transfer);
   void parseUpdate(const std::string& transfer);
   void getFreeVariables(std::set<std::string>& freeVariables);
@@ -1619,6 +1629,8 @@ public:
 		       const std::vector<boost::dynamic_bitset<> >& masks);
   pANTLR3_COMMON_TREE_NODE_STREAM getNodes() { return mNodes; }
   pANTLR3_BASE_TREE getAST() { return mNodes->root; }
+  IQLRecordConstructor * generateTransferAST(DynamicRecordContext & recCtxt);
+  IQLExpression * generateFunctionAST(DynamicRecordContext & recCtxt);
 };
 
 IQLParserStuff::IQLParserStuff()
@@ -1627,7 +1639,8 @@ IQLParserStuff::IQLParserStuff()
   mStream(NULL),
   mLexer(NULL),
   mParser(NULL),
-  mNodes(NULL)
+  mNodes(NULL),
+  mNativeAST(NULL)
 {
 }
 
@@ -1679,6 +1692,15 @@ void IQLParserStuff::initParse(const std::string& transfer)
   mParser = IQLParserNew(mStream);
   if (!mParser)
     throw std::runtime_error("Antlr out of memory");  
+}
+
+void IQLParserStuff::parseFunction(const std::string& f)
+{  
+  initParse(f);
+  IQLParser_singleExpression_return parserRet = mParser->singleExpression(mParser);
+  if (mParser->pParser->rec->state->errorCount > 0)
+    throw std::runtime_error((boost::format("Parse failed: %1%") % f).str());
+  mNodes = antlr3CommonTreeNodeStreamNewTree(parserRet.tree, ANTLR3_SIZE_HINT);
 }
 
 void IQLParserStuff::parseTransfer(const std::string& transfer)
@@ -1832,6 +1854,38 @@ void IQLParserStuff::typeCheckUpdate(DynamicRecordContext & recCtxt,
   alz->statementBlock(alz.get(), wrap(&typeCheckContext));
   if (alz->pTreeParser->rec->state->errorCount > 0)
     throw std::runtime_error("Type check failed");
+}
+
+IQLRecordConstructor * IQLParserStuff::generateTransferAST(DynamicRecordContext & recCtxt)
+{
+  // Generate native AST.  We'll eventually move all analysis
+  // to this.
+  ANTLR3AutoPtr<IQLAnalyze> nativeASTGenerator(IQLAnalyzeNew(mNodes));
+  IQLRecordConstructor * nativeAST = unwrap(nativeASTGenerator->recordConstructor(nativeASTGenerator.get(), 
+							   wrap(&recCtxt)));
+  if (nativeASTGenerator->pTreeParser->rec->state->errorCount > 0)
+    throw std::runtime_error("AST generation failed");
+  return nativeAST;
+}
+
+IQLExpression * IQLParserStuff::generateFunctionAST(DynamicRecordContext & recCtxt)
+{
+  // Generate native AST.  We'll eventually move all analysis
+  // to this.
+  ANTLR3AutoPtr<IQLAnalyze> nativeASTGenerator(IQLAnalyzeNew(mNodes));
+  IQLExpression * nativeAST = unwrap(nativeASTGenerator->singleExpression(nativeASTGenerator.get(), 
+							   wrap(&recCtxt)));
+  if (nativeASTGenerator->pTreeParser->rec->state->errorCount > 0)
+    throw std::runtime_error("AST generation failed");
+  return nativeAST;
+}
+
+IQLRecordConstructor * RecordTypeTransfer::getAST(class DynamicRecordContext& recCtxt,
+						  const std::string& xfer)
+{
+  IQLParserStuff p;
+  p.parseTransfer(xfer);
+  return p.generateTransferAST(recCtxt);
 }
 
 void RecordTypeTransfer::getFreeVariables(const std::string& xfer,
@@ -2356,6 +2410,14 @@ int32_t IQLFunctionModule::execute(RecordBuffer sourceA, RecordBuffer sourceB, c
   (*mFunction)((char *) sourceA.Ptr, (char *) sourceB.Ptr, &ret, ctxt);    
   ctxt->clear();
   return ret;
+}
+
+IQLExpression * RecordTypeFunction::getAST(class DynamicRecordContext& recCtxt,
+						  const std::string& f)
+{
+  IQLParserStuff p;
+  p.parseFunction(f);
+  return p.generateFunctionAST(recCtxt);
 }
 
 RecordTypeFunction::RecordTypeFunction(class DynamicRecordContext& recCtxt, 

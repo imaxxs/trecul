@@ -127,6 +127,7 @@ statement[IQLTypeCheckContextRef ctxt]
 	(
 	setStatement[$ctxt]
 	| variableDeclaration[$ctxt]
+	| declareStatement[$ctxt]
 	| printStatement[$ctxt]
 	| ifStatement[$ctxt]
 	| statementBlock[$ctxt]
@@ -188,7 +189,7 @@ statementBlock[IQLTypeCheckContextRef ctxt]
 
 whileStatement[IQLTypeCheckContextRef ctxt]
 	:
-	^(TK_WHILE expression[$ctxt] statement[$ctxt])
+	^(TK_WHILE e=expression[$ctxt] { IQLTypeCheckNot($ctxt, e.ty); } statementBlock[$ctxt])
 	;
 
 builtInType[IQLTypeCheckContextRef ctxt] returns [IQLFieldTypeRef ty]
@@ -275,6 +276,8 @@ IQLFieldTypeVectorRef types=NULL;
     | ^(TK_MAX { IQLTypeCheckBeginAggregateFunction($ctxt); } e1 = expression[$ctxt] { $ty = IQLTypeCheckBuildAggregateFunction($ctxt, e1.ty); $TK_MAX->u = $ty; } )
     | ^(TK_MIN { IQLTypeCheckBeginAggregateFunction($ctxt); } e1 = expression[$ctxt] { $ty = IQLTypeCheckBuildAggregateFunction($ctxt, e1.ty); $TK_MIN->u = $ty; } )
     | ^(TK_INTERVAL intervalType = ID e1 = expression[$ctxt] { $ty = IQLTypeCheckBuildInterval($ctxt, (const char *) $intervalType.text->chars, e1.ty); $TK_INTERVAL->u = $ty; } )
+    | ^(c=ARRAY { types = IQLFieldTypeVectorCreate(); } (e1 = expression[$ctxt] { IQLFieldTypeVectorPushBack(types, e1.ty); })*) 
+        { $ty = IQLTypeCheckArray($ctxt, types); IQLFieldTypeVectorFree(types); $c->u = $ty; }
     ;    
 
 whenExpression[IQLTypeCheckContextRef ctxt]

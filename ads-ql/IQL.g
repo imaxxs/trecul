@@ -45,6 +45,7 @@ tokens {
   LITERAL_CAST;
   DATETIME_LITERAL;
   DECIMAL_BIGINT_LITERAL; 
+  ARRAY;
 }
 
 graph
@@ -156,6 +157,7 @@ statement
 	(
 	setStatement (';'!)?
 	| variableDeclaration (';'!)?
+	| declareStatement (';'!)?
 	| printStatement (';'!)?
 	| ifStatement
 	| statementBlock (';'!)?
@@ -250,7 +252,17 @@ statementBlock
 
 whileStatement
 	:
-	TK_WHILE expression statement  -> ^(TK_WHILE expression statement)
+	TK_WHILE expression keyDo whileStatementList TK_END TK_WHILE -> ^(TK_WHILE expression whileStatementList)
+	;
+
+keyDo
+	:
+	{ 0==strcmp(LT(1)->getText(LT(1))->chars,"DO") }? ID
+	;
+
+whileStatementList
+	:
+	(statement)* -> ^(TK_BEGIN["BEGIN"] statement*)
 	;
 
 // expressions
@@ -286,7 +298,7 @@ whileStatement
 //   is usually very straightfoward
 
 /******************************************
-Precedence of TSQL operators
+Precedence of IQL operators
 
 (1) + (Positive), - (Negative), ~ (Bitwise NOT)
 (2) * (Multiply), / (Division), % (Modulo)
@@ -507,7 +519,13 @@ primaryExpression
 	| ID '['^ expression ']'!
   | TK_NULL
   | '('! expression ')'!
+  | arrayExpression
 	);
+
+arrayExpression
+	:
+    '[' expressionList ']' -> ^(ARRAY expressionList)
+	;
 
 //Lexer
 TK_ADD : 'ADD';

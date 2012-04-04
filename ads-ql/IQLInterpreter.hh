@@ -497,6 +497,12 @@ private:
   bool mIsIdentity;
 public:
   /**
+   * Get abstract syntax tree.
+   */
+  static class IQLRecordConstructor * getAST(class DynamicRecordContext& recCtxt,
+					     const std::string& xfer);
+
+  /**
    * Get the list of free variables in the transfer.
    */
   static void getFreeVariables(const std::string& xfer,
@@ -769,6 +775,12 @@ private:
   class IQLRecordBufferMethodHandle * mImpl;
 public:
   /**
+   * Get abstract syntax tree.
+   */
+  static class IQLExpression * getAST(class DynamicRecordContext& recCtxt,
+				      const std::string& xfer);
+
+  /**
    * Compile an expression against a set of input sources.
    * Right now this will throw if there are any name collisions among
    * the inputs.  TODO: Support aliasing or multi-part names to disambiguate.
@@ -780,6 +792,7 @@ public:
 		     const std::vector<std::string> * prefixes = NULL);
 
   ~RecordTypeFunction();
+
   /**
    * Get abstract syntax tree.
    */

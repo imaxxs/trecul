@@ -143,6 +143,7 @@ expression[IQLGetVariablesContextRef ctxt]
     | ^(TK_MAX { IQLGetVariablesBeginAggregateFunction($ctxt); } expression[$ctxt] { IQLGetVariablesBuildAggregateFunction($ctxt); })
     | ^(TK_MIN { IQLGetVariablesBeginAggregateFunction($ctxt); } expression[$ctxt] { IQLGetVariablesBuildAggregateFunction($ctxt); })
     | ^(TK_INTERVAL ID expression[$ctxt])
+    | ^(ARRAY (expression[$ctxt])*)
     ;    
 
 whenExpression[IQLGetVariablesContextRef ctxt]

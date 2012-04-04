@@ -144,13 +144,6 @@ IQLToLLVMValueRef IQLToLLVMBuildIsNull(CodeGenerationContext * ctxt, IQLToLLVMVa
 void IQLToLLVMBuildSetValue2(CodeGenerationContext * ctxt, 
 			     IQLToLLVMValueRef iqlVal,
 			     IQLToLLVMValueRef iqllvalue);
-void IQLToLLVMBuildSetNullableValue(CodeGenerationContext * ctxt,
-				    const IQLToLLVMLValue * lval,
-				    IQLToLLVMValueRef val);
-void IQLToLLVMBuildSetNullableValue(CodeGenerationContext * ctxt,
-				    const IQLToLLVMLValue * lval,
-				    IQLToLLVMValueRef val,
-				    bool allowNullToNonNull);
 
 LLVMValueRef IQLToLLVMGetCachedLocal(CodeGenerationContext * ctxt,
 			     LLVMTypeRef ty)
@@ -245,12 +238,29 @@ class IQLToLLVMTypePredicate
 public:
   static bool isChar(LLVMTypeRef ty)
   {
+    // This is safe for now since we don't have int8 as an 
+    // IQL type.  Ultimately this should be removed and
+    // we should be using FieldType for this info.
     return LLVMPointerTypeKind == LLVMGetTypeKind(ty) &&
-      LLVMArrayTypeKind == LLVMGetTypeKind(LLVMGetElementType(ty));
+      LLVMArrayTypeKind == LLVMGetTypeKind(LLVMGetElementType(ty)) &&
+      llvm::unwrap(LLVMGetElementType(LLVMGetElementType(ty)))->isIntegerTy(8);
   }
   static bool isChar(LLVMValueRef val)
   {
     return isChar(LLVMTypeOf(val));
+  }
+  static bool isArrayType(LLVMTypeRef ty)
+  {
+    // This is safe for now since we don't have int8 as an 
+    // IQL type.  Ultimately this should be removed and
+    // we should be using FieldType for this info.
+    return LLVMPointerTypeKind == LLVMGetTypeKind(ty) &&
+      LLVMArrayTypeKind == LLVMGetTypeKind(LLVMGetElementType(ty)) &&
+      !llvm::unwrap(LLVMGetElementType(LLVMGetElementType(ty)))->isIntegerTy(8);
+  }
+  static bool isArrayType(LLVMValueRef val)
+  {
+    return isArrayType(LLVMTypeOf(val));
   }
 };
 
@@ -846,21 +856,23 @@ void IQLToLLVMBuildLocalVariable(IQLCodeGenerationContextRef ctxtRef, const char
   CodeGenerationContext * ctxt = unwrap(ctxtRef);
   llvm::IRBuilder<> * b = llvm::unwrap(ctxt->LLVMBuilder);
   const FieldType * ft = (const FieldType * ) attrs;
-  // Allocate local
-  IQLToLLVMBuildDeclareLocal(ctxtRef, nm, attrs);
-  // Create a temporary LValue object
-  const IQLToLLVMLValue * localLVal = unwrap(IQLToLLVMBuildLValue(ctxtRef, nm));
-  // Set the value
-  IQLToLLVMBuildSetNullableValue(ctxt, localLVal, init);
-  // if (ft->isNullable()) {  
-  //   // TODO: Fix this.  The symbol table needs to updated with
-  //   // the null value and it only contains mValue.  We need to
-  //   // get the entire LValue into the symbol table.
-  //   // N.B. We can't load the null value in the basic blocks
-  //   // that are created in SetNullableValue without adding Phi,
-  //   // so we do it here (in the merge block).
-  //   const_cast<IQLToLLVMValue *>(unwrap(localVal))->setNull(b->CreateLoad(llvm::unwrap(nullVal), "NullBitRef"));
-  // }
+
+  // TODO: Temporary hack dealing with a special case in which the
+  // initializing expression has already allocated a slot for the
+  // lvalue.
+  if (ft->GetEnum() == FieldType::FIXED_ARRAY && 
+      !ft->isNullable() &&
+      unwrap(init)->getValueType() == IQLToLLVMValue::eLocal) {
+    ctxt->defineVariable(nm, llvm::unwrap(unwrap(init)->getValue()), NULL,
+			 IQLToLLVMValue::eLocal);    
+  } else {
+    // Allocate local
+    IQLToLLVMBuildDeclareLocal(ctxtRef, nm, attrs);
+    // Create a temporary LValue object
+    const IQLToLLVMLValue * localLVal = unwrap(IQLToLLVMBuildLValue(ctxtRef, nm));
+    // Set the value
+    IQLToLLVMBuildSetNullableValue(ctxt, localLVal, init);
+  }
 }
 
 LLVMValueRef LLVMCreateEntryBlockAlloca(CodeGenerationContext * ctxt, LLVMTypeRef ty, const char * name) {
@@ -2546,6 +2558,15 @@ IQLToLLVMValueRef IQLToLLVMBuildArrayRef(IQLCodeGenerationContextRef ctxtRef,
   return IQLToLLVMBuildRef (ctxt, wrap(unwrap(allocAVal)->getEntirePointer(ctxt)));
 }
 
+IQLToLLVMValueRef IQLToLLVMBuildArray(IQLCodeGenerationContextRef ctxtRef, 
+				      IQLToLLVMValueVectorRef lhs, void * arrayAttrs)
+{
+  CodeGenerationContext * ctxt = unwrap(ctxtRef);
+  std::vector<const IQLToLLVMValue *> &vals(*unwrap(lhs));
+  const FieldType * ty = (const FieldType *) arrayAttrs;
+  return wrap(ctxt->buildArray(vals, ty));
+}
+
 void IQLToLLVMBuildSetValue2(IQLCodeGenerationContextRef ctxtRef, 
 			     IQLToLLVMValueRef iqlVal,
 			     IQLToLLVMValueRef iqllvalue)
@@ -2588,6 +2609,8 @@ void IQLToLLVMBuildSetValue2(IQLCodeGenerationContextRef ctxtRef,
     llvmVal = LLVMBuildLoad(ctxt->LLVMBuilder, llvmVal, "setdecval");
   } else if (IQLToLLVMTypePredicate::isChar(llvmVal)) {
     llvmVal = LLVMBuildLoad(ctxt->LLVMBuilder, llvmVal, "setcharval");
+  } else if (IQLToLLVMTypePredicate::isArrayType(llvmVal)) {
+    llvmVal = LLVMBuildLoad(ctxt->LLVMBuilder, llvmVal, "setarrayval");
   } else if (LLVMTypeOf(llvmVal) == LLVMPointerType(ctxt->LLVMVarcharType, 0)) {
     // TODO:
     // Four cases here depending on the global/local dichotomy for the source
@@ -2655,15 +2678,55 @@ IQLToLLVMLValueRef IQLToLLVMBuildArrayLValue(IQLCodeGenerationContextRef ctxtRef
 					     IQLToLLVMValueRef idx)
 {
   CodeGenerationContext * ctxt = unwrap(ctxtRef);
+  llvm::Module * m = llvm::unwrap(ctxt->LLVMModule);
+  llvm::LLVMContext * c = llvm::unwrap(ctxt->LLVMContext);
   llvm::IRBuilder<> * b = llvm::unwrap(ctxt->LLVMBuilder);
+  llvm::Function *f = b->GetInsertBlock()->getParent();
   const IQLToLLVMValue * lvalue = ctxt->lookupValue(var);
   llvm::Value * lval = llvm::unwrap(lvalue->getValue());
-  
+
   // Convert index to int64
   idx = IQLToLLVMBinaryConversion::convertTo(ctxt, 
 					     idx, 
 					     LLVMInt64TypeInContext(ctxt->LLVMContext));
 
+  // TODO: The "should" be a pointer to an array type and for us to GEP it
+  // we need to bitcast to a pointer to the element type.
+  // However...  There is a hack that we are being backward compatible
+  // with for the moment that allows one to array reference a scalar
+  // which is already a pointer to element type!
+  const llvm::PointerType * ptrType = llvm::dyn_cast<llvm::PointerType>(lval->getType());
+  BOOST_ASSERT(ptrType != NULL);
+  const llvm::ArrayType * arrayType = llvm::dyn_cast<llvm::ArrayType>(ptrType->getElementType());
+  if (arrayType) {    
+    // Seeing about 50% performance overhead for the bounds checking.
+    // Not implementing this until I have some optimization mechanism
+    // for safely removing them in some cases (perhaps using LLVM).
+
+    // llvm::Value * lowerBound = b->CreateICmpSLT(llvm::unwrap(unwrap(idx)->getValue()),
+    // 						b->getInt64(0));
+    // llvm::Value * upperBound = b->CreateICmpSGE(llvm::unwrap(unwrap(idx)->getValue()),
+    // 						b->getInt64(arrayType->getNumElements()));
+    // llvm::Value * cond = b->CreateOr(lowerBound, upperBound);
+    // // TODO: Make a single module-wide basic block for the exceptional case?
+    // llvm::BasicBlock * goodBlock = 
+    //   llvm::BasicBlock::Create(*c, "arrayDereference", f);
+    // llvm::BasicBlock * exceptionBlock = 
+    //   llvm::BasicBlock::Create(*c, "arrayIndexException", f);
+    // // Branch and set block
+    // b->CreateCondBr(cond, exceptionBlock, goodBlock);
+    // // Array out of bounds exception
+    // b->SetInsertPoint(exceptionBlock); 
+    // b->CreateCall(m->getFunction("InternalArrayException"));
+    // // We should never make the branch since we actually
+    // // throw in the called function.
+    // b->CreateBr(goodBlock);
+
+    // // Array check good: emit the value.
+    // b->SetInsertPoint(goodBlock);  
+    lval = b->CreateBitCast(lval, llvm::PointerType::get(arrayType->getElementType(),0));
+  }
+  
   // GEP to get pointer to the correct offset.
   llvm::Value * gepIndexes[1] = { llvm::unwrap(unwrap(idx)->getValue())};
   lval = b->CreateInBoundsGEP(lval, &gepIndexes[0], &gepIndexes[1]);
@@ -2824,6 +2887,26 @@ IQLToLLVMValueRef IQLToLLVMCaseBlockFinish(IQLCodeGenerationContextRef ctxtRef)
   stk.pop();
 
   return IQLToLLVMValue::get(ctxt, result, nullBit, IQLToLLVMValue::eLocal);
+}
+
+void IQLToLLVMWhileBegin(IQLCodeGenerationContextRef ctxtRef)
+{
+  CodeGenerationContext * ctxt = unwrap(ctxtRef);
+  ctxt->whileBegin();
+}
+
+void IQLToLLVMWhileStatementBlock(IQLCodeGenerationContextRef ctxtRef, 
+				  IQLToLLVMValueRef condVal, 
+				  void * condAttrs)
+{
+  CodeGenerationContext * ctxt = unwrap(ctxtRef);
+  ctxt->whileStatementBlock(unwrap(condVal), (const FieldType *) condAttrs);
+}
+
+void IQLToLLVMWhileFinish(IQLCodeGenerationContextRef ctxtRef)
+{
+  CodeGenerationContext * ctxt = unwrap(ctxtRef);
+  ctxt->whileFinish();
 }
 
 void IQLToLLVMBeginIfThenElse(IQLCodeGenerationContextRef ctxtRef, IQLToLLVMValueRef condVal)
@@ -4389,6 +4472,13 @@ IQLFieldTypeRef IQLTypeCheckBuildInterval(IQLTypeCheckContextRef ctxtRef,
     throw std::runtime_error("INTERVAL type must be one of DAY, HOUR, MINUTE, "
 			     "MONTH, SECOND or YEAR");
   }
+}
+
+IQLFieldTypeRef IQLTypeCheckArray(IQLTypeCheckContextRef ctxtRef, IQLFieldTypeVectorRef lhs)
+{
+  TypeCheckContext * ctxt = unwrap(ctxtRef);
+  const std::vector<const FieldType*> & ty(*unwrap(lhs));
+  return wrap(ctxt->buildArray(ty));
 }
 
 IQLFieldTypeRef IQLTypeCheckSymbolTableGetType(IQLTypeCheckContextRef ctxtRef, const char * name)

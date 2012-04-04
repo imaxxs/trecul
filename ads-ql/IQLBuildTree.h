@@ -13,6 +13,27 @@ extern "C" {
   typedef struct IQLExpressionStruct * IQLExpressionRef;
   typedef struct IQLExpressionListStruct * IQLExpressionListRef;
   typedef const struct IQLFieldTypeStruct * IQLFieldTypeRef;
+  typedef struct IQLRecordConstructorStruct * IQLRecordConstructorRef;
+  typedef struct IQLFieldConstructorStruct * IQLFieldConstructorRef;
+  typedef struct IQLFieldConstructorListStruct * IQLFieldConstructorListRef;
+
+  IQLFieldConstructorListRef IQLFieldConstructorListCreate(IQLTreeFactoryRef ctxtRef);
+  void IQLFieldConstructorListFree(IQLTreeFactoryRef ctxtRef,
+				   IQLFieldConstructorListRef l);
+  void IQLFieldConstructorListAppend(IQLTreeFactoryRef ctxtRef,
+				     IQLFieldConstructorListRef l,
+				     IQLFieldConstructorRef e);
+
+  IQLFieldConstructorRef IQLBuildAddFields(IQLTreeFactoryRef ctxtRef, 
+					   const char * recordName);
+  IQLFieldConstructorRef IQLBuildAddField(IQLTreeFactoryRef ctxtRef, 
+					  const char * fieldName,
+					  IQLExpressionRef expr);
+  IQLFieldConstructorRef IQLBuildQuotedId(IQLTreeFactoryRef ctxtRef, 
+					  const char * pattern,
+					  const char * names);
+  IQLRecordConstructorRef IQLBuildRecord(IQLTreeFactoryRef ctxtRef,
+					 IQLFieldConstructorListRef fields);
 
   IQLFieldTypeRef IQLBuildInt32Type(IQLTreeFactoryRef ctxtRef, int nullable);
   IQLFieldTypeRef IQLBuildInt64Type(IQLTreeFactoryRef ctxtRef, int nullable);
@@ -172,6 +193,9 @@ extern "C" {
 				    const char * text,
 				    IQLExpressionRef idx,
 				    int line, int column);
+  IQLExpressionRef IQLBuildArray(IQLTreeFactoryRef ctxtRef,
+				 IQLExpressionListRef args,
+				 int line, int column);
 
 
 #ifdef __cplusplus

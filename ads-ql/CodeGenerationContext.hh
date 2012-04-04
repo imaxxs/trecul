@@ -422,6 +422,38 @@ public:
 			  const RecordType * rec,
 			  const boost::dynamic_bitset<>& mask,
 			  const char * prefix);
+
+  /**
+   * Build a while loop.
+   * 
+   * To use this:
+   * Call whileBegin before generating the condition predicate.
+   * Call whileStatementBlock after generating the condition predicate and before
+   * any of the statements.
+   * Call whileFinish after generating all of the statements in the
+   * body of the loop.
+   */
+  void whileBegin();
+  void whileStatementBlock(const IQLToLLVMValue * condVal,
+			   const FieldType * condTy);
+  void whileFinish();
+
+  /**
+   * Conditionally branch using a possibly nullable boolean
+   * condition value.
+   */
+  void conditionalBranch(const IQLToLLVMValue * condVal,
+			 const FieldType * condTy,
+			 llvm::BasicBlock * trueBranch,
+			 llvm::BasicBlock * falseBranch);
+
+  /**
+   * Build an array expression
+   */
+  const IQLToLLVMValue * buildArray(std::vector<const IQLToLLVMValue *>& vals,
+				    const FieldType * arrayTy);
+  const IQLToLLVMValue * buildGlobalConstArray(std::vector<const IQLToLLVMValue *>& vals,
+					       const FieldType * arrayTy);
 };
 
 
@@ -445,4 +477,11 @@ IQLToLLVMValueRef IQLToLLVMCreateGlobalValue(CodeGenerationContext * ctxt, LLVMV
  */
 IQLToLLVMValueRef IQLToLLVMCreateNullableGlobalValue(CodeGenerationContext * ctxt, LLVMValueRef val, LLVMValueRef nv);
 
+void IQLToLLVMBuildSetNullableValue(CodeGenerationContext * ctxt,
+				    const IQLToLLVMLValue * lval,
+				    IQLToLLVMValueRef val);
+void IQLToLLVMBuildSetNullableValue(CodeGenerationContext * ctxt,
+				    const IQLToLLVMLValue * lval,
+				    IQLToLLVMValueRef val,
+				    bool allowNullToNonNull);
 #endif
