@@ -173,7 +173,7 @@ public:
   {
     return *(double *) (buffer.Ptr + mOffset);
   }
-  int32_t getArrayDouble(RecordBuffer buffer, int idx) const
+  double getArrayDouble(RecordBuffer buffer, int idx) const
   {
     return ((double *) (buffer.Ptr + mOffset))[idx];
   }

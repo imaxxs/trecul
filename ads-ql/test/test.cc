@@ -85,8 +85,7 @@ BOOST_AUTO_TEST_CASE(testNativeAST)
   types.push_back(&emptyTy);
 
   {
-    RecordTypeFunction hasher(ctxt, "charhash", types, "23   =    \n 45992354454LL");
-    IQLExpression * ast = hasher.getAST();
+    IQLExpression * ast = RecordTypeFunction::getAST(ctxt, "23   =    \n 45992354454LL");
     BOOST_CHECK_EQUAL(IQLExpression::EQ, ast->getNodeType());
     BOOST_CHECK_EQUAL(2U, ast->args_size());
     BOOST_CHECK_EQUAL(1, ast->getLine());
@@ -103,8 +102,7 @@ BOOST_AUTO_TEST_CASE(testNativeAST)
     BOOST_CHECK_EQUAL(1, right->getColumn());
   }
   {
-    RecordTypeFunction hasher(ctxt, "charhash", types, " 2388234LL  \n > 77823e+02");
-    IQLExpression * ast = hasher.getAST();
+    IQLExpression * ast = RecordTypeFunction::getAST(ctxt," 2388234LL  \n > 77823e+02");
     BOOST_CHECK_EQUAL(IQLExpression::GTN, ast->getNodeType());
     BOOST_CHECK_EQUAL(2U, ast->args_size());
     BOOST_CHECK_EQUAL(2, ast->getLine());
@@ -129,10 +127,10 @@ BOOST_AUTO_TEST_CASE(testNativeAST)
 					  IQLExpression::LTN, IQLExpression::NEQ,
 					  IQLExpression::GTEQ, IQLExpression::LTEQ};
   for(int i=0; i<6; ++i) {
-    RecordTypeFunction hasher(ctxt, "charhash", types, 
-			      (boost::format("99.77 %1% 99.7734") %
-			       toks[i]).str());
-    IQLExpression * ast = hasher.getAST();
+    IQLExpression * ast = 
+      RecordTypeFunction::getAST(ctxt, 
+				 (boost::format("99.77 %1% 99.7734") %
+				  toks[i]).str());
     BOOST_CHECK_EQUAL(nodeTypes[i], ast->getNodeType());
     BOOST_CHECK_EQUAL(2U, ast->args_size());
     BOOST_CHECK_EQUAL(1, ast->getLine());
@@ -153,10 +151,10 @@ BOOST_AUTO_TEST_CASE(testNativeAST)
   const char * logical_toks [2] = {"AND", "OR "};
   IQLExpression::NodeType logicalNodeTypes[2] = {IQLExpression::LAND, IQLExpression::LOR};
   for(int i=0; i<2; ++i) {
-    RecordTypeFunction hasher(ctxt, "charhash", types, 
-			      (boost::format("23 > 19 %1% 34<99") % 
-			       logical_toks[i]).str());
-    IQLExpression * ast = hasher.getAST();
+    IQLExpression * ast = 
+      RecordTypeFunction::getAST(ctxt, 
+				 (boost::format("23 > 19 %1% 34<99") % 
+				  logical_toks[i]).str());
     BOOST_CHECK_EQUAL(logicalNodeTypes[i], ast->getNodeType());
     BOOST_CHECK_EQUAL(2U, ast->args_size());
     BOOST_CHECK_EQUAL(1, ast->getLine());
@@ -176,19 +174,19 @@ BOOST_AUTO_TEST_CASE(testNativeAST)
   }
   const char * unary_fun_toks [2] = {"#  ", "$  "};
   for(int i=0; i<2; ++i) {
-    RecordTypeFunction hasher(ctxt, "charhash", types, 
-			      (boost::format("%1%(c)") % 
-			       unary_fun_toks[i]).str());
-    IQLExpression * ast = hasher.getAST();
+    IQLExpression * ast =
+      RecordTypeFunction::getAST(ctxt,  
+				 (boost::format("%1%(c)") % 
+				  unary_fun_toks[i]).str());
     BOOST_CHECK_EQUAL(IQLExpression::CALL, ast->getNodeType());
     BOOST_CHECK_EQUAL(1U, ast->args_size());
     BOOST_CHECK_EQUAL(1, ast->getLine());
     BOOST_CHECK_EQUAL(3, ast->getColumn());
   }
   {
-    RecordTypeFunction hasher(ctxt, "charhash", types, 
-			      "CAST(d AS   INTEGER)");
-    IQLExpression * ast = hasher.getAST();
+    IQLExpression * ast =
+      RecordTypeFunction::getAST(ctxt, 
+				 "CAST(d AS   INTEGER)");
     BOOST_CHECK_EQUAL(IQLExpression::CAST, ast->getNodeType());
     BOOST_CHECK_EQUAL(1U, ast->args_size());
     BOOST_CHECK_EQUAL(1, ast->getLine());
@@ -196,17 +194,17 @@ BOOST_AUTO_TEST_CASE(testNativeAST)
     CastExpr * castExpr = static_cast<CastExpr *>(ast);
     BOOST_CHECK_EQUAL(Int32Type::Get(ctxt), castExpr->getCastType());
   }
-  // {
-  //   RecordTypeFunction hasher(ctxt, "charhash", types, 
-  // 			      "CAST(e AS   BIGINT)");
-  //   IQLExpression * ast = hasher.getAST();
-  //   BOOST_CHECK_EQUAL(IQLExpression::CAST, ast->getNodeType());
-  //   BOOST_CHECK_EQUAL(1U, ast->args_size());
-  //   BOOST_CHECK_EQUAL(1, ast->getLine());
-  //   BOOST_CHECK_EQUAL(11, ast->getColumn());
-  //   CastExpr * castExpr = static_cast<CastExpr *>(ast);
-  //   BOOST_CHECK_EQUAL(Int64Type::Get(ctxt), castExpr->getCastType());
-  // }
+  {
+    IQLExpression * ast =
+      RecordTypeFunction::getAST(ctxt, 
+				 "CAST(e AS   BIGINT)");
+    BOOST_CHECK_EQUAL(IQLExpression::CAST, ast->getNodeType());
+    BOOST_CHECK_EQUAL(1U, ast->args_size());
+    BOOST_CHECK_EQUAL(1, ast->getLine());
+    BOOST_CHECK_EQUAL(11, ast->getColumn());
+    CastExpr * castExpr = static_cast<CastExpr *>(ast);
+    BOOST_CHECK_EQUAL(Int64Type::Get(ctxt), castExpr->getCastType());
+  }
 }
 
 BOOST_AUTO_TEST_CASE(testRecordConstructorNativeAST)
@@ -257,8 +255,8 @@ BOOST_AUTO_TEST_CASE(testEquiJoinDetector)
   types.push_back(&rhsTy);
 
   {
-    RecordTypeFunction pred(ctxt, "pred", types, "a = e");
-    IQLExpression * ast = pred.getAST();
+    IQLExpression * ast =
+      RecordTypeFunction::getAST(ctxt, "a = e");
     IQLEquiJoinDetector d(ctxt, &recTy, &rhsTy, ast);
     BOOST_CHECK(NULL == d.getResidual());
     BOOST_CHECK_EQUAL(1U, d.getLeftEquiJoinKeys().size());
@@ -270,8 +268,8 @@ BOOST_AUTO_TEST_CASE(testEquiJoinDetector)
     BOOST_CHECK_EQUAL(IQLExpression::EQ, e->getNodeType());
   }
   {
-    RecordTypeFunction pred(ctxt, "pred", types, "a = e AND z = y");
-    IQLExpression * ast = pred.getAST();
+    IQLExpression * ast =
+      RecordTypeFunction::getAST(ctxt, "a = e AND z = y");
     IQLEquiJoinDetector d(ctxt, &recTy, &rhsTy, ast);
     BOOST_CHECK(NULL == d.getResidual());
     BOOST_CHECK_EQUAL(2U, d.getLeftEquiJoinKeys().size());
@@ -285,8 +283,8 @@ BOOST_AUTO_TEST_CASE(testEquiJoinDetector)
     BOOST_CHECK_EQUAL(IQLExpression::LAND, e->getNodeType());
   }
   {
-    RecordTypeFunction pred(ctxt, "pred", types, "a = e AND z = y AND c = g");
-    IQLExpression * ast = pred.getAST();
+    IQLExpression * ast = 
+      RecordTypeFunction::getAST(ctxt, "a = e AND z = y AND c = g");
     IQLEquiJoinDetector d(ctxt, &recTy, &rhsTy, ast);
     BOOST_CHECK(NULL == d.getResidual());
     BOOST_CHECK_EQUAL(3U, d.getLeftEquiJoinKeys().size());
@@ -306,8 +304,8 @@ BOOST_AUTO_TEST_CASE(testEquiJoinDetector)
     // parens that change the parse tree coming out of
     // ANTLR.  So this test is testing the tree normalization
     // implicit in the equi join rewrite.
-    RecordTypeFunction pred(ctxt, "pred", types, "a = e AND (z = y AND c = g)");
-    IQLExpression * ast = pred.getAST();
+    IQLExpression * ast = 
+      RecordTypeFunction::getAST(ctxt, "a = e AND (z = y AND c = g)");
     IQLEquiJoinDetector d(ctxt, &recTy, &rhsTy, ast);
     BOOST_CHECK(NULL == d.getResidual());
     BOOST_CHECK_EQUAL(3U, d.getLeftEquiJoinKeys().size());
@@ -323,8 +321,7 @@ BOOST_AUTO_TEST_CASE(testEquiJoinDetector)
     BOOST_CHECK_EQUAL(IQLExpression::LAND, e->getNodeType());
   }
   {
-    RecordTypeFunction pred(ctxt, "pred", types, "a = e AND z > y");
-    IQLExpression * ast = pred.getAST();
+    IQLExpression * ast = RecordTypeFunction::getAST(ctxt, "a = e AND z > y");
     IQLEquiJoinDetector d(ctxt, &recTy, &rhsTy, ast);
     BOOST_CHECK_EQUAL(1U, d.getLeftEquiJoinKeys().size());
     BOOST_CHECK_EQUAL(1U, d.getRightEquiJoinKeys().size());
@@ -346,8 +343,7 @@ BOOST_AUTO_TEST_CASE(testEquiJoinDetector)
 		      (*(r->begin_args()+1))->getNodeType());
   }
   {
-    RecordTypeFunction pred(ctxt, "pred", types, "a = e OR z = y");
-    IQLExpression * ast = pred.getAST();
+    IQLExpression * ast = RecordTypeFunction::getAST(ctxt, "a = e OR z = y");
     IQLEquiJoinDetector d(ctxt, &recTy, &rhsTy, ast);
     BOOST_CHECK_EQUAL(0U, d.getLeftEquiJoinKeys().size());
     BOOST_CHECK_EQUAL(0U, d.getRightEquiJoinKeys().size());
@@ -388,8 +384,7 @@ BOOST_AUTO_TEST_CASE(testFreeVariablesRule)
   types.push_back(&rhsTy);
 
   {
-    RecordTypeFunction pred(ctxt, "pred", types, "a = e");
-    IQLExpression * ast = pred.getAST();
+    IQLExpression * ast = RecordTypeFunction::getAST(ctxt, "a = e");
     IQLFreeVariablesRule d(ast);
     BOOST_CHECK_EQUAL(2U, d.getVariables().size());
     BOOST_CHECK(d.getVariables().find("a") != d.getVariables().end());
@@ -422,8 +417,7 @@ BOOST_AUTO_TEST_CASE(testSplitPredicateRule)
   types.push_back(&rhsTy);
 
   {
-    RecordTypeFunction pred(ctxt, "pred", types, "a = e");
-    IQLExpression * ast = pred.getAST();
+    IQLExpression * ast = RecordTypeFunction::getAST(ctxt, "a = e");
     IQLSplitPredicateRule d(ctxt, &recTy, &rhsTy, ast);
     BOOST_CHECK(NULL == d.getLeft());
     BOOST_CHECK(NULL == d.getRight());
@@ -431,8 +425,7 @@ BOOST_AUTO_TEST_CASE(testSplitPredicateRule)
     BOOST_REQUIRE(NULL != d.getBoth());
   }
   {
-    RecordTypeFunction pred(ctxt, "pred", types, "c = d");
-    IQLExpression * ast = pred.getAST();
+    IQLExpression * ast = RecordTypeFunction::getAST(ctxt, "c = d");
     IQLSplitPredicateRule d(ctxt, &recTy, &rhsTy, ast);
     BOOST_CHECK(NULL == d.getBoth());
     BOOST_CHECK(NULL == d.getRight());
@@ -440,8 +433,7 @@ BOOST_AUTO_TEST_CASE(testSplitPredicateRule)
     BOOST_REQUIRE(NULL != d.getLeft());
   }
   {
-    RecordTypeFunction pred(ctxt, "pred", types, "g = h");
-    IQLExpression * ast = pred.getAST();
+    IQLExpression * ast = RecordTypeFunction::getAST(ctxt, "g = h");
     IQLSplitPredicateRule d(ctxt, &recTy, &rhsTy, ast);
     BOOST_CHECK(NULL == d.getBoth());
     BOOST_CHECK(NULL == d.getLeft());
@@ -458,8 +450,7 @@ BOOST_AUTO_TEST_CASE(testSplitPredicateRule)
 					 (*(d.getRight()->begin_args()+1))->getStringData()));
   }
   {
-    RecordTypeFunction pred(ctxt, "pred", types, "c=d AND g = h");
-    IQLExpression * ast = pred.getAST();
+    IQLExpression * ast = RecordTypeFunction::getAST(ctxt, "c=d AND g = h");
     IQLSplitPredicateRule d(ctxt, &recTy, &rhsTy, ast);
     BOOST_CHECK(NULL == d.getBoth());
     BOOST_CHECK(NULL == d.getOther());

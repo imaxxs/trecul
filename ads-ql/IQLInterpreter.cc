@@ -2429,7 +2429,6 @@ RecordTypeFunction::RecordTypeFunction(class DynamicRecordContext& recCtxt,
   mSources(sources),
   mFunName(funName),
   mStatements(statements),
-  mAST(NULL),
   mFunction(NULL),
   mImpl(NULL)
 {
@@ -2494,12 +2493,6 @@ RecordTypeFunction::RecordTypeFunction(class DynamicRecordContext& recCtxt,
   typeCheckContext.loadBuiltinFunctions();
 
   ANTLR3AutoPtr<ANTLR3_COMMON_TREE_NODE_STREAM> nodes(antlr3CommonTreeNodeStreamNewTree(parserRet.tree, ANTLR3_SIZE_HINT));
-  // First generate native AST.  We'll eventually move all analysis
-  // to this.
-  ANTLR3AutoPtr<IQLAnalyze> nativeAST(IQLAnalyzeNew(nodes.get()));
-  mAST = unwrap(nativeAST->singleExpression(nativeAST.get(), wrap(&recCtxt)));
-  if (nativeAST->pTreeParser->rec->state->errorCount > 0)
-    throw std::runtime_error("AST generation failed");
   
   // Now pass through the type checker
   ANTLR3AutoPtr<IQLTypeCheck> alz(IQLTypeCheckNew(nodes.get()));
@@ -2579,11 +2572,6 @@ RecordTypeFunction::RecordTypeFunction(class DynamicRecordContext& recCtxt,
 RecordTypeFunction::~RecordTypeFunction()
 {
   delete mImpl;
-}
-
-IQLExpression* RecordTypeFunction::getAST()
-{
-  return mAST;
 }
 
 int32_t RecordTypeFunction::execute(RecordBuffer source, RecordBuffer target, class InterpreterContext * ctxt) const

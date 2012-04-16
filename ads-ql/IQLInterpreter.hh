@@ -769,7 +769,6 @@ private:
   std::string mFunName;
   std::string mStatements;
   std::vector<unsigned char> mBitcode;
-  class IQLExpression * mAST;
 
   LLVMFuncType mFunction;
   class IQLRecordBufferMethodHandle * mImpl;
@@ -792,11 +791,6 @@ public:
 		     const std::vector<std::string> * prefixes = NULL);
 
   ~RecordTypeFunction();
-
-  /**
-   * Get abstract syntax tree.
-   */
-  class IQLExpression * getAST();
 
   /**
    * Evaluate and return.
