@@ -586,8 +586,34 @@ void hdfs_file_traits::expand(std::string pattern,
   hdfsFreeFileInfo(fileInfo, numEntries);
 }
 
+static boost::mutex fsCacheGuard;
 static std::map<std::string, hdfsFS> fsCache;
-static std::map<std::string, hdfsFile> fileCache;
+
+static hdfsFS connectToHDFS(URI & path)
+{
+  hdfsFS fs = NULL;
+  // Note that if we were connecting to many different
+  // hosts it might not be acceptable to hold the lock
+  // during the connect call, but in this case it is 
+  // probably better to be pessimistic and block other
+  // threads since they are likely connecting to the
+  // same HDFS instance.
+  boost::unique_lock<boost::mutex> lk(fsCacheGuard);
+  
+  std::map<std::string, hdfsFS>::iterator it = fsCache.find(path.getHost());
+  if (it == fsCache.end()) {
+    fs = hdfsConnect(path.getHost().c_str(), path.getPort());
+    if (fs == NULL) {
+      throw std::runtime_error((boost::format("Couldn't open HDFS filesystem. host=%1%; port=%2%") %
+				path.getHost() %
+				path.getPort()).str());
+    }
+    fsCache[path.getHost()] = fs;
+  } else {
+    fs = it->second;
+  }
+  return fs;
+}
 
 hdfs_file_traits::file_type hdfs_file_traits::open_for_read(const char * filename, 
 							    uint64_t beginOffset,
@@ -597,18 +623,7 @@ hdfs_file_traits::file_type hdfs_file_traits::open_for_read(const char * filenam
 
   file_type f = new hdfs_file_handle();
   // Connect to the file system
-  std::map<std::string, hdfsFS>::iterator it = fsCache.find(path.getHost());
-  if (it == fsCache.end()) {
-    f->FileSystem = hdfsConnect(path.getHost().c_str(), path.getPort());
-    if (f->FileSystem == NULL) {
-      throw std::runtime_error((boost::format("Couldn't open HDFS filesystem. host=%1%; port=%2%") %
-				path.getHost() %
-				path.getPort()).str());
-    }
-    fsCache[path.getHost()] = f->FileSystem;
-  } else {
-    f->FileSystem = it->second;
-  }
+  f->FileSystem = connectToHDFS(path);
 
   // Check and save the size of the file.
   hdfsFileInfo * fi = hdfsGetPathInfo(f->FileSystem, path.getPath().c_str());
@@ -620,21 +635,14 @@ hdfs_file_traits::file_type hdfs_file_traits::open_for_read(const char * filenam
   f->End = (uint64_t) fi->mSize;
   hdfsFreeFileInfo(fi, 1);
     
-  std::map<std::string, hdfsFile>::iterator fit = fileCache.find(path.getPath());
-  if (fit == fileCache.end()) {
-    f->File = hdfsOpenFile(f->FileSystem, 
-			   path.getPath().c_str(), 
-			   O_RDONLY,
-			   0,
-			   0,
-			   0);
-    if (f->File == NULL) {
-      throw std::runtime_error((boost::format("Couldn't open HDFS file %1%") %
-				filename).str());
-    }
-    fileCache[path.getPath()] = f->File;
-  } else {
-    f->File = fit->second;
+  f->File = hdfsOpenFile(f->FileSystem, 
+			 path.getPath().c_str(), 
+			 O_RDONLY,
+			 0, 0, 0);
+  
+  if (f->File == NULL) {
+    throw std::runtime_error((boost::format("Couldn't open HDFS file %1%") %
+			      filename).str());
   }
 
   // Seek to appropriate offset.
@@ -645,8 +653,8 @@ hdfs_file_traits::file_type hdfs_file_traits::open_for_read(const char * filenam
 
 void hdfs_file_traits::close(hdfs_file_traits::file_type f)
 {
+  hdfsCloseFile(f->FileSystem, f->File);
   // Don't close since we have the caching hack.
-  //hdfsCloseFile(f->FileSystem, f->File);
   //hdfsDisconnect(f->FileSystem);
 }
 
