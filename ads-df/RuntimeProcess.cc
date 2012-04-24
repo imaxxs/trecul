@@ -689,6 +689,7 @@ private:
   std::string mMapper;
   std::string mReducer;
   std::string mName;
+  std::string mJobQueue;
   int32_t mNumReducers;
   bool mJvmReuse;
   boost::filesystem::path mLocalPipesPath;
@@ -731,6 +732,7 @@ public:
   void setName(const std::string& name);
   void setNumReducers(int32_t numReducers);
   void setJvmReuse(bool jvmReuse);
+  void setJobQueue(const std::string& jobQueue);
   std::string get() const;
   void copyFilesToHDFS();
   static int32_t copyFromLocal(const std::string& localPath,
@@ -780,6 +782,11 @@ void AdsPipesJobConf::setJvmReuse(bool jvmReuse)
   mJvmReuse = jvmReuse;
 }
  
+void AdsPipesJobConf::setJobQueue(const std::string& jobQueue)
+{
+  mJobQueue = jobQueue;
+}
+
 std::string AdsPipesJobConf::get() const
 {
   boost::format openBoilerPlateFormat(
@@ -827,6 +834,12 @@ std::string AdsPipesJobConf::get() const
 			"     <value>%1%</value>\n"
 			"  </property>\n"
 			);
+  boost::format jobQueue(
+			 "  <property>\n"
+			 "     <name>mapreduce.job.queuename</name>\n"
+			 "     <value>%1%</value>\n"
+			 "  </property>\n"
+			 );
   // We used to put plans in the job conf and let them get pushed
   // out through the distributed cache by virtue of that. When we 
   // had "large" plans such as those generated from scoring runs
@@ -870,6 +883,9 @@ std::string AdsPipesJobConf::get() const
   std::string ret = (openBoilerPlateFormat % getPipesExecutableName() % jvmReuseProperty).str();
   std::string distCacheFiles;
   ret += (jobName % mName).str();
+  if (mJobQueue.size()) {
+    ret += (jobQueue % mJobQueue).str();
+  }
   // The URI fragment on dist cache names is used
   // to determine the name of the symlink that will 
   // created.  Pass the fragment in the job conf so
@@ -1083,7 +1099,7 @@ int PlanRunner::runMapReduceJob(const std::string& mapProgram,
 				const std::string& outputDirArg,
 				bool useHp)
 {
-  return runMapReduceJob(mapProgram, reduceProgram, "", 
+  return runMapReduceJob(mapProgram, reduceProgram, "", "",
 			 inputDirArg, outputDirArg,
 			 reduceProgram.size() ? 1 : 0, true, useHp);
 }
@@ -1096,13 +1112,14 @@ int PlanRunner::runMapReduceJob(const std::string& mapProgram,
 				bool jvmReuse,
 				bool useHp)
 {
-  return runMapReduceJob(mapProgram, reduceProgram, "", inputDirArg, 
+  return runMapReduceJob(mapProgram, reduceProgram, "", "", inputDirArg, 
 			 outputDirArg, numReduces, true, useHp);
 }
 
 int PlanRunner::runMapReduceJob(const std::string& mapProgram,
 				const std::string& reduceProgram,
 				const std::string& name,
+				const std::string& jobQueue,
 				const std::string& inputDirArg,
 				const std::string& outputDirArg,
 				int32_t numReduces,
@@ -1133,6 +1150,7 @@ int PlanRunner::runMapReduceJob(const std::string& mapProgram,
   // Set up job conf and fork/exec hadoop to run
   AdsPipesJobConf jobConf(jobDir);
   jobConf.setName(name);
+  jobConf.setJobQueue(jobQueue);
 
   std::string mapBuf;
   std::string emitFormat;
@@ -1264,6 +1282,7 @@ int PlanRunner::run(int argc, char ** argv)
     ("numreduces", po::value<int32_t>(), "number of reducers")
     ("input", po::value<std::string>(), "input directory for jobs run through Hadoop pipes")
     ("output", po::value<std::string>(), "output directory for jobs run through Hadoop pipes")
+    ("jobqueue", po::value<std::string>(), "job queue for jobs run through Hadoop pipes")
     ("proxy", "use proxy ads-hp-client for jobs run through Hadoop pipes")
     ;
 
@@ -1291,6 +1310,7 @@ int PlanRunner::run(int argc, char ** argv)
   pairs.push_back(std::make_pair("map", "output"));
   pairs.push_back(std::make_pair("map", "proxy"));
   pairs.push_back(std::make_pair("map", "nojvmreuse"));
+  pairs.push_back(std::make_pair("map", "jobqueue"));
   if (!checkRequiredArgs(vm, pairs)) {
     std::cerr << desc << std::endl;
     return 1;    
@@ -1328,7 +1348,7 @@ int PlanRunner::run(int argc, char ** argv)
     RuntimeProcess p(partition,partition,partitions,*tmp.get());
     p.run();
     return 0;
-  } else if (vm.count("map")) {
+  } else if (vm.count("map")) {    
     bool useHp(vm.count("proxy") > 0);
     bool jvmReuse(vm.count("nojvmreuse") == 0);
     std::string inputDir(vm.count("input") ? 
@@ -1337,6 +1357,9 @@ int PlanRunner::run(int argc, char ** argv)
     std::string outputDir(vm.count("output") ? 
 			  vm["output"].as<std::string>().c_str() : 
 			  "");
+    std::string jobQueue(vm.count("jobqueue") ? 
+			 vm["jobqueue"].as<std::string>().c_str() : 
+			 "");
 
     std::string mapProgram;
     readInputFile(vm["map"].as<std::string>(), mapProgram);
@@ -1366,6 +1389,7 @@ int PlanRunner::run(int argc, char ** argv)
     return runMapReduceJob(mapProgram,
 			   reduceProgram,
 			   name,
+			   jobQueue,
 			   inputDir,
 			   outputDir,
 			   reduces,

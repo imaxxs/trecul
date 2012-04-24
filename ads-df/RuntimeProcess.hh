@@ -283,6 +283,7 @@ public:
   static int runMapReduceJob(const std::string& mapProgram,
 			     const std::string& reduceProgram,
 			     const std::string& name,
+			     const std::string& jobQueue,
 			     const std::string& inputDir,
 			     const std::string& outputDir,
 			     int32_t numReduces,
