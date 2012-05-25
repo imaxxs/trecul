@@ -1,0 +1,16 @@
+/**
+ * A simple one to one outer join.
+ */
+g1 = generate[output="RECORDCOUNT AS a", numRecords=10];
+
+g2 = generate[output="2*RECORDCOUNT AS b", numRecords=10];
+
+j = hash_left_outer_join[tableKey="b", probeKey="a", output="a,b"];
+g2 -> j;
+g1 -> j;
+
+s = sort[key="b"];
+j -> s;
+
+d = write[file="output.txt", formatFile="format.txt", mode="text"];
+s -> d;

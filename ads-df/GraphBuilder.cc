@@ -83,6 +83,7 @@ BOOST_CLASS_EXPORT(RuntimeCopyOperatorType);
 BOOST_CLASS_EXPORT(RuntimeFilterOperatorType);
 BOOST_CLASS_EXPORT(RuntimeSortMergeOperatorType);
 BOOST_CLASS_EXPORT(RuntimeSortOperatorType);
+BOOST_CLASS_EXPORT(RuntimeSwitchOperatorType);
 BOOST_CLASS_EXPORT(RuntimeHadoopEmitOperatorType);
 BOOST_CLASS_EXPORT(RuntimeHdfsWriteOperatorType);
 BOOST_CLASS_EXPORT(RuntimeWriteOperatorType);
@@ -331,6 +332,10 @@ void DataflowGraphBuilder::nodeStart(const char * type,
     mCurrentOp = new LogicalGroupBy(LogicalGroupBy::HASH);
   } else if (boost::algorithm::iequals("hash_join", type)) {
     mCurrentOp = new HashJoin(HashJoin::INNER);
+  } else if (boost::algorithm::iequals("hash_full_outer_join", type)) {
+    mCurrentOp = new HashJoin(HashJoin::FULL_OUTER);
+  } else if (boost::algorithm::iequals("hash_left_outer_join", type)) {
+    mCurrentOp = new HashJoin(HashJoin::LEFT_OUTER);
   } else if (boost::algorithm::iequals("hash_right_anti_semi_join", type)) {
     mCurrentOp = new HashJoin(HashJoin::RIGHT_ANTI_SEMI);
   } else if (boost::algorithm::iequals("hash_right_outer_join", type)) {
@@ -341,6 +346,10 @@ void DataflowGraphBuilder::nodeStart(const char * type,
     mCurrentOp = new LogicalInputQueue();
   } else if (boost::algorithm::iequals("merge_join", type)) {
     mCurrentOp = new SortMergeJoin(SortMergeJoin::INNER);
+  } else if (boost::algorithm::iequals("merge_full_outer_join", type)) {
+    mCurrentOp = new SortMergeJoin(SortMergeJoin::FULL_OUTER);
+  } else if (boost::algorithm::iequals("merge_left_outer_join", type)) {
+    mCurrentOp = new SortMergeJoin(SortMergeJoin::LEFT_OUTER);
   } else if (boost::algorithm::iequals("merge_right_anti_semi_join", type)) {
     mCurrentOp = new SortMergeJoin(SortMergeJoin::RIGHT_ANTI_SEMI);
   } else if (boost::algorithm::iequals("merge_right_outer_join", type)) {
@@ -359,6 +368,8 @@ void DataflowGraphBuilder::nodeStart(const char * type,
     mCurrentOp = new LogicalGroupBy(LogicalGroupBy::SORT);
   } else if (boost::algorithm::iequals("sort_merge", type)) {
     mCurrentOp = new LogicalSortMerge();
+  } else if (boost::algorithm::iequals("switch", type)) {
+    mCurrentOp = new LogicalSwitch();
   } else if (boost::algorithm::iequals("union_all", type)) {
     mCurrentOp = new LogicalUnionAll();
   } else if (boost::algorithm::iequals("unpivot", type)) {

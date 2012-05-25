@@ -1,0 +1,13 @@
+/**
+ * A simple one to one outer join.
+ */
+g1 = generate[output="2*RECORDCOUNT AS a", numRecords=10];
+
+g2 = generate[output="3*RECORDCOUNT AS b", numRecords=10];
+
+j = merge_full_outer_join[leftKey="a", rightKey="b"];
+g1 -> j;
+g2 -> j;
+
+d = write[file="output.txt", mode="text"];
+j -> d;

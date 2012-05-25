@@ -1225,7 +1225,7 @@ private:
   // Hash table for the current set of sort group keys.
   paged_hash_table mTable;
   paged_hash_table::query_iterator<paged_hash_table::probe_predicate> mSearchIterator;
-  paged_hash_table::scan_iterator mScanIterator;
+  paged_hash_table::scan_all_iterator mScanIterator;
 
   const RuntimeHashGroupByOperatorType & getHashGroupByType() { return *reinterpret_cast<const RuntimeHashGroupByOperatorType *>(&getOperatorType()); }
 public:
@@ -1671,35 +1671,6 @@ void RuntimeSortRunningTotalOperator::shutdown()
 {
 }
 
-paged_hash_table::scan_iterator::scan_iterator()
-  :
-  mPage(NULL),
-  mBucket(NULL),
-  mBucketEnd(NULL),
-  mHashPtr(NULL),
-  mState(START)
-{
-}
-
-paged_hash_table::scan_iterator::scan_iterator(paged_hash_table& table)
-  :
-  mPage(table.mBuckets),
-  mBucket(table.mBuckets),
-  mBucketEnd(table.mBuckets + table.mNumBuckets),
-  mHashPtr(NULL),
-  mState(START)
-{
-}
-
-void paged_hash_table::scan_iterator::init(paged_hash_table& table)
-{
-  mPage = table.mBuckets;
-  mBucket = table.mBuckets;
-  mBucketEnd = table.mBuckets + table.mNumBuckets;
-  mHashPtr = NULL;
-  mState = START;
-}
-
 paged_hash_table::paged_hash_table(bool ownTableData, const IQLFunctionModule * tableHash)
   :
   mOwnTableData(ownTableData),
@@ -1802,7 +1773,6 @@ void paged_hash_table::insert(bucket_page * p,
   } else {
     *hashPtr = h;
     p->Value[hashPtr - &p->Hash[0]] = tableInput;
-    p->Bitmap |= (1ULL << (h % 64));
   }
 }
 
@@ -1878,6 +1848,8 @@ HashJoin::HashJoin(HashJoin::JoinType joinType)
   mEq(NULL),
   mTransfer(NULL),
   mSemiJoinTransfer(NULL),
+  mProbeMakeNullableTransfer(NULL),
+  mTableMakeNullableTransfer(NULL),  
   mJoinType(joinType),
   mJoinOne(false)
 {
@@ -1943,6 +1915,8 @@ HashJoin::HashJoin(DynamicRecordContext & ctxt,
   mEq(NULL),
   mTransfer(NULL),
   mSemiJoinTransfer(NULL),
+  mProbeMakeNullableTransfer(NULL),
+  mTableMakeNullableTransfer(NULL),  
   mJoinType(INNER),
   mJoinOne(joinOne)
 {
@@ -1970,6 +1944,8 @@ HashJoin::HashJoin(DynamicRecordContext & ctxt,
   mEq(NULL),
   mTransfer(NULL),
   mSemiJoinTransfer(NULL),
+  mProbeMakeNullableTransfer(NULL),
+  mTableMakeNullableTransfer(NULL),  
   mJoinType(INNER),
   mJoinOne(joinOne)
 {
@@ -1983,6 +1959,8 @@ HashJoin::~HashJoin()
   delete mEq;
   delete mTransfer;
   delete mSemiJoinTransfer;
+  delete mProbeMakeNullableTransfer;
+  delete mTableMakeNullableTransfer; 
 }
 
 void HashJoin::init(DynamicRecordContext & ctxt,
@@ -2052,14 +2030,21 @@ void HashJoin::init(DynamicRecordContext & ctxt,
     mEq = new RecordTypeFunction(ctxt, "eq", tableAndProbe, residual);
   }
 
-  if (mJoinType==RIGHT_OUTER ||
+  if (mJoinType == FULL_OUTER ||
+      mJoinType == LEFT_OUTER ||
+      mJoinType==RIGHT_OUTER ||
       mJoinType==INNER) {
-    mSemiJoinTransfer = SortMergeJoin::makeNullableTransfer(ctxt, mTableInput);
+    mTableMakeNullableTransfer = SortMergeJoin::makeNullableTransfer(ctxt, mTableInput);
+    mProbeMakeNullableTransfer = SortMergeJoin::makeNullableTransfer(ctxt, mProbeInput);
     std::vector<AliasedRecordType> types;
-    types.push_back(AliasedRecordType("table", mJoinType==RIGHT_OUTER ?
-				      mSemiJoinTransfer->getTarget() :
+    types.push_back(AliasedRecordType("table", (mJoinType==FULL_OUTER ||
+						mJoinType==RIGHT_OUTER) ?
+				      mTableMakeNullableTransfer->getTarget() :
 				      mTableInput));
-    types.push_back(AliasedRecordType("probe", mProbeInput));
+    types.push_back(AliasedRecordType("probe", (mJoinType==FULL_OUTER || 
+						mJoinType==LEFT_OUTER) ?
+				      mProbeMakeNullableTransfer->getTarget() :
+				      mProbeInput));
     mTransfer = new RecordTypeTransfer2(ctxt, "makeoutput", types, transfer.size() ? transfer : "table.*, probe.*");
   } else {
     mSemiJoinTransfer = new RecordTypeTransfer(ctxt, "makeoutput", 
@@ -2079,14 +2064,17 @@ RuntimeOperatorType * HashJoin::create() const
 					     mEq,
 					     mTransfer,
 					     mJoinOne);
-    } else if (mJoinType == RIGHT_OUTER) {
-      return new RuntimeHashJoinOperatorType(mTableInput->getFree(),
+    } else if (mJoinType == FULL_OUTER || mJoinType == LEFT_OUTER ||
+	       mJoinType == RIGHT_OUTER) {
+      return new RuntimeHashJoinOperatorType(mJoinType,
+					     mTableInput->getFree(),
 					     mProbeInput->getFree(),
 					     mTableHash,
 					     mProbeHash,
 					     mEq,
 					     mTransfer,
-					     mSemiJoinTransfer);
+					     mTableMakeNullableTransfer,
+					     mProbeMakeNullableTransfer);
     } else {
       return new RuntimeHashJoinOperatorType(mTableInput->getFree(),
 					     mProbeInput->getFree(),
@@ -2111,6 +2099,8 @@ RuntimeHashJoinOperatorType::~RuntimeHashJoinOperatorType()
   delete mEqFun;
   delete mTransferModule;
   delete mSemiJoinTransferModule;
+  delete mProbeMakeNullableTransferModule;
+  delete mTableMakeNullableTransferModule;
 }
 
 RuntimeOperator * RuntimeHashJoinOperatorType::create(RuntimeOperator::Services & s) const
@@ -2132,7 +2122,13 @@ RuntimeHashJoinOperator::RuntimeHashJoinOperator(RuntimeOperator::Services& serv
 
 RuntimeHashJoinOperator::~RuntimeHashJoinOperator()
 {
-  if (getHashJoinType().mJoinType == HashJoin::RIGHT_OUTER &&
+  if ((getHashJoinType().mJoinType == HashJoin::FULL_OUTER ||
+       getHashJoinType().mJoinType == HashJoin::RIGHT_OUTER) &&
+      mNullTableRecord != RecordBuffer()) {
+    getHashJoinType().mTableNullFree.free(mNullTableRecord);
+  }
+  if ((getHashJoinType().mJoinType == HashJoin::FULL_OUTER ||
+       getHashJoinType().mJoinType == HashJoin::LEFT_OUTER) &&
       mNullProbeRecord != RecordBuffer()) {
     getHashJoinType().mProbeNullFree.free(mNullProbeRecord);
   }
@@ -2143,7 +2139,13 @@ void RuntimeHashJoinOperator::start()
 {
   mState = START;
 
-  if (getHashJoinType().mJoinType == HashJoin::RIGHT_OUTER &&
+  if ((getHashJoinType().mJoinType == HashJoin::FULL_OUTER ||
+       getHashJoinType().mJoinType == HashJoin::RIGHT_OUTER) &&
+      mNullTableRecord == RecordBuffer()) {
+    mNullTableRecord = getHashJoinType().mTableNullMalloc.malloc();
+  }
+  if ((getHashJoinType().mJoinType == HashJoin::FULL_OUTER ||
+       getHashJoinType().mJoinType == HashJoin::LEFT_OUTER) &&
       mNullProbeRecord == RecordBuffer()) {
     mNullProbeRecord = getHashJoinType().mProbeNullMalloc.malloc();
   }
@@ -2182,36 +2184,158 @@ RecordBuffer RuntimeHashJoinOperator::onSemi()
 
 RecordBuffer RuntimeHashJoinOperator::onRightOuterMatch()
 {
+  // std::cout << "RuntimeHashJoinOperator::onRightOuterMatch" << std::endl;
   RecordBuffer output;
   // Must put this in tmp variable because signature of transfer
   // wants a non-const reference (to support move semantics).
-
-  // Convert to nullable properties on the table.
-  RecordBuffer tmp1 = mSearchIterator.value();
-  RecordBuffer tmp2;
-  getHashJoinType().mSemiJoinTransferModule->execute(tmp1,
-						     tmp2,
-						     mRuntimeContext,
-						     false);
+  switch (getHashJoinType().mJoinType) {
+  case HashJoin::RIGHT_OUTER:
+    {
+      // Convert to nullable properties on the table.
+      RecordBuffer tmp1 = mSearchIterator.value();
+      RecordBuffer tmp2;
+      getHashJoinType().mTableMakeNullableTransferModule->execute(tmp1,
+								  tmp2,
+								  mRuntimeContext,
+								  false);
   
-  getHashJoinType().mTransferModule->execute(tmp2,
-					     mSearchIterator.mQueryPredicate.ProbeThis,
-					     output,
-					     mRuntimeContext,
-					     false,
-					     false);
+      getHashJoinType().mTransferModule->execute(tmp2,
+						 mSearchIterator.mQueryPredicate.ProbeThis,
+						 output,
+						 mRuntimeContext,
+						 false,
+						 false);
+      getHashJoinType().mTableNullFree.free(tmp2);
+      break;
+    }
+  case HashJoin::FULL_OUTER:
+    {
+      // Convert to nullable properties on the table.
+      RecordBuffer tmp = mSearchIterator.value();
+      RecordBuffer tmp1;
+      RecordBuffer tmp2;
+      getHashJoinType().mTableMakeNullableTransferModule->execute(tmp,
+								  tmp1,
+								  mRuntimeContext,
+								  false);
+      tmp = mSearchIterator.mQueryPredicate.ProbeThis;
+      getHashJoinType().mProbeMakeNullableTransferModule->execute(tmp,
+								  tmp2,
+								  mRuntimeContext,
+								  false);
+  
+      getHashJoinType().mTransferModule->execute(tmp1,
+						 tmp2,
+						 output,
+						 mRuntimeContext,
+						 false,
+						 false);
+      getHashJoinType().mTableNullFree.free(tmp1);
+      getHashJoinType().mProbeNullFree.free(tmp2);
+      break;
+    }
+  case HashJoin::LEFT_OUTER:
+    {
+      // Convert to nullable properties on the probe.
+      RecordBuffer tmp = mSearchIterator.mQueryPredicate.ProbeThis;
+      RecordBuffer tmp1 = mSearchIterator.value();
+      RecordBuffer tmp2;
+      getHashJoinType().mProbeMakeNullableTransferModule->execute(tmp,
+								  tmp2,
+								  mRuntimeContext,
+								  false);
+  
+      getHashJoinType().mTransferModule->execute(tmp1,
+						 tmp2,
+						 output,
+						 mRuntimeContext,
+						 false,
+						 false);
+      getHashJoinType().mProbeNullFree.free(tmp2);
+      break;
+    }
+  default:
+    throw std::runtime_error("INTERNAL ERROR : Invalid join type");
+  }
+  return output;
+}
+
+RecordBuffer RuntimeHashJoinOperator::onTableNonMatch(RecordBuffer tableBuf)
+{
+  // std::cout << "RuntimeHashJoinOperator::onTableNonMatch" << std::endl;
+  RecordBuffer output;
+  // Must put this in tmp variable because signature of transfer
+  // wants a non-const reference (to support move semantics).
+  switch (getHashJoinType().mJoinType) {
+  case HashJoin::FULL_OUTER:
+    {
+      // Convert to nullable properties on the table.
+      RecordBuffer tmp1;
+      getHashJoinType().mTableMakeNullableTransferModule->execute(tableBuf,
+								  tmp1,
+								  mRuntimeContext,
+								  false);
+      getHashJoinType().mTransferModule->execute(tmp1,
+						 mNullProbeRecord,
+						 output,
+						 mRuntimeContext,
+						 false,
+						 false);
+      getHashJoinType().mTableNullFree.free(tmp1);
+      break;
+    }
+  case HashJoin::LEFT_OUTER:
+    {
+      getHashJoinType().mTransferModule->execute(tableBuf,
+						 mNullProbeRecord,
+						 output,
+						 mRuntimeContext,
+						 false,
+						 false);
+      break;
+    }
+  default:
+    throw std::runtime_error("INTERNAL ERROR : Invalid join type");
+  }
   return output;
 }
 
 RecordBuffer RuntimeHashJoinOperator::onRightOuterNonMatch()
 {
+  // std::cout << "RuntimeHashJoinOperator::onRightOuterNonMatch" << std::endl;
   RecordBuffer output;
-  getHashJoinType().mTransferModule->execute(mNullProbeRecord,
-					     mSearchIterator.mQueryPredicate.ProbeThis,
-					     output,
-					     mRuntimeContext,
-					     false,
-					     false);
+  switch (getHashJoinType().mJoinType) {
+  case HashJoin::RIGHT_OUTER:
+    {
+      getHashJoinType().mTransferModule->execute(mNullTableRecord,
+						 mSearchIterator.mQueryPredicate.ProbeThis,
+						 output,
+						 mRuntimeContext,
+						 false,
+						 false);
+      break;
+    }
+  case HashJoin::FULL_OUTER:
+    {
+      // Convert to nullable properties on the probe.
+      RecordBuffer tmp = mSearchIterator.mQueryPredicate.ProbeThis;
+      RecordBuffer tmp1;
+      getHashJoinType().mProbeMakeNullableTransferModule->execute(tmp,
+								  tmp1,
+								  mRuntimeContext,
+								  false);
+      getHashJoinType().mTransferModule->execute(mNullTableRecord,
+						 tmp1,
+						 output,
+						 mRuntimeContext,
+						 false,
+						 false);
+      break;
+    }
+  default:
+    throw std::runtime_error("INTERNAL ERROR : Invalid join type");
+  }
+
   return output;
 }
 
@@ -2259,7 +2383,9 @@ void RuntimeHashJoinOperator::onEvent(RuntimePort * port)
 	      if (getHashJoinType().mJoinType == HashJoin::INNER) {
 		RecordBuffer output = onInner();
 		write(port, output, false);
-	      } else if (getHashJoinType().mJoinType == HashJoin::RIGHT_OUTER) {
+	      } else if (getHashJoinType().mJoinType == HashJoin::FULL_OUTER ||
+			 getHashJoinType().mJoinType == HashJoin::LEFT_OUTER ||
+			 getHashJoinType().mJoinType == HashJoin::RIGHT_OUTER) {
 		RecordBuffer output = onRightOuterMatch();
 		write(port, output, false);
 	      } else {
@@ -2273,6 +2399,7 @@ void RuntimeHashJoinOperator::onEvent(RuntimePort * port)
 	    } while(mSearchIterator.next(mRuntimeContext));
 	  }
 	} else if (getHashJoinType().mJoinType == HashJoin::RIGHT_ANTI_SEMI ||
+		   getHashJoinType().mJoinType == HashJoin::FULL_OUTER ||
 		   getHashJoinType().mJoinType == HashJoin::RIGHT_OUTER) {
 	  requestWrite(0);
 	  mState = WRITE_UNMATCHED;
@@ -2291,7 +2418,23 @@ void RuntimeHashJoinOperator::onEvent(RuntimePort * port)
       }
     }
 
-    
+    if (getHashJoinType().mJoinType == HashJoin::FULL_OUTER ||
+	getHashJoinType().mJoinType == HashJoin::LEFT_OUTER) {
+      // Find any non matchers in the table and output.
+      mScanIterator.init(mTable);
+      while(mScanIterator.next(mRuntimeContext)) {
+	// Write the contents of the table
+	requestWrite(0);
+	mState = WRITE_TABLE_UNMATCHED;
+	return;
+      case WRITE_TABLE_UNMATCHED: 
+	{
+	  RecordBuffer out = onTableNonMatch(mScanIterator.value());
+	  write(port, out, false);
+	}
+      }
+    }
+
     requestWrite(0);
     mState = WRITE_EOS;
     return;
@@ -2821,6 +2964,14 @@ SortMergeJoin::makeNullableTransfer(DynamicRecordContext& ctxt,
 				makeNullableXfer);
 }
 
+bool SortMergeJoin::isInnerOrOuter(JoinType joinType)
+{
+  return joinType==FULL_OUTER ||
+    joinType==LEFT_OUTER ||
+    joinType==RIGHT_OUTER ||
+    joinType==INNER;
+}
+
 SortMergeJoin::SortMergeJoin(SortMergeJoin::JoinType joinType)
   :
   LogicalOperator(2,2,1,1),
@@ -2832,7 +2983,8 @@ SortMergeJoin::SortMergeJoin(SortMergeJoin::JoinType joinType)
   mLeftRightKeyCompare(NULL),
   mResidual(NULL),
   mMatchTransfer(NULL),
-  mMakeNullableTransfer(NULL)
+  mLeftMakeNullableTransfer(NULL),
+  mRightMakeNullableTransfer(NULL)
 {
 }
 
@@ -2854,7 +3006,8 @@ SortMergeJoin::SortMergeJoin(DynamicRecordContext & ctxt,
   mLeftRightKeyCompare(NULL),
   mResidual(NULL),
   mMatchTransfer(NULL),
-  mMakeNullableTransfer(NULL)
+  mLeftMakeNullableTransfer(NULL),
+  mRightMakeNullableTransfer(NULL)
 {
   init(ctxt, leftKeys, rightKeys, residual, matchTransfer);
 }
@@ -2876,9 +3029,9 @@ void SortMergeJoin::init(DynamicRecordContext & ctxt,
   // stack allocate the temporary record type). 
   // Then let the LLVM inliner elimate unnecessary
   // data movement????
-  if (mJoinType==RIGHT_OUTER ||
-      mJoinType==INNER) {
-    mMakeNullableTransfer = makeNullableTransfer(ctxt, mLeftInput);
+  if (isInnerOrOuter(mJoinType)) {
+    mLeftMakeNullableTransfer = makeNullableTransfer(ctxt, mLeftInput);
+    mRightMakeNullableTransfer = makeNullableTransfer(ctxt, mRightInput);
   }
 
   // Create functions for testing equality of left and right keys.
@@ -2895,24 +3048,29 @@ void SortMergeJoin::init(DynamicRecordContext & ctxt,
     mResidual = new RecordTypeFunction(ctxt, "eqpred", residualTypes, residual);
   }
 
-  if (mJoinType==RIGHT_OUTER ||
-      mJoinType==INNER) {
+  if (isInnerOrOuter(mJoinType)) {
     std::vector<AliasedRecordType> aliasedTypes;
-    aliasedTypes.push_back(AliasedRecordType("l", mJoinType==RIGHT_OUTER ?
-					     mMakeNullableTransfer->getTarget() :
+    aliasedTypes.push_back(AliasedRecordType("l", (mJoinType==FULL_OUTER || 
+						   mJoinType==RIGHT_OUTER) ?
+					     mLeftMakeNullableTransfer->getTarget() :
 					     mLeftInput));
-    aliasedTypes.push_back(AliasedRecordType("r", mRightInput));
+    aliasedTypes.push_back(AliasedRecordType("r", (mJoinType==FULL_OUTER || 
+						   mJoinType==LEFT_OUTER) ?
+					     mRightMakeNullableTransfer->getTarget() :
+					     mRightInput));
     mMatchTransfer = new RecordTypeTransfer2(ctxt, "onmatch", 
 					     aliasedTypes, 
 					     matchTransfer.size() ?
 					     matchTransfer :
 					     "l.*, r.*");
   } else {
-    mMakeNullableTransfer = new RecordTypeTransfer(ctxt, "onmatch",
+    mLeftMakeNullableTransfer = new RecordTypeTransfer(ctxt, "onmatch",
 						   mRightInput,
 						   matchTransfer.size() ?
 						   matchTransfer :
 						   "input.*");
+    // Not used at runtime but necessary for creating the runtime operator type.
+    mRightMakeNullableTransfer = makeNullableTransfer(ctxt, mRightInput);
   }
 }
 
@@ -2923,7 +3081,8 @@ SortMergeJoin::~SortMergeJoin()
   delete mLeftRightKeyCompare;
   delete mResidual;
   delete mMatchTransfer;
-  delete mMakeNullableTransfer;
+  delete mLeftMakeNullableTransfer;
+  delete mRightMakeNullableTransfer;
 }
 
 const RecordType * SortMergeJoin::getOutputType() const
@@ -2961,9 +3120,9 @@ void SortMergeJoin::check(PlanCheckContext& ctxt)
 
   init(ctxt, leftKeys, rightKeys, residual, transfer);
 
-  getOutput(0)->setRecordType((mJoinType == INNER || mJoinType == RIGHT_OUTER) ?
+  getOutput(0)->setRecordType(isInnerOrOuter(mJoinType) ?
 			      mMatchTransfer->getTarget() :
-			      mMakeNullableTransfer->getTarget());
+			      mLeftMakeNullableTransfer->getTarget());
 }
 
 void SortMergeJoin::create(class RuntimePlanBuilder& plan)
@@ -2985,7 +3144,8 @@ RuntimeOperatorType * SortMergeJoin::create() const
 					      mLeftRightKeyCompare,
 					      mResidual,
 					      mMatchTransfer,
-					      mMakeNullableTransfer);
+					      mLeftMakeNullableTransfer,
+					      mRightMakeNullableTransfer);
 }
 
 RuntimeSortMergeJoinOperatorType::~RuntimeSortMergeJoinOperatorType()
@@ -2995,7 +3155,8 @@ RuntimeSortMergeJoinOperatorType::~RuntimeSortMergeJoinOperatorType()
   delete mLeftRightKeyCompareFun;
   delete mEqFun;
   delete mMatchTransfer;
-  delete mMakeNullableTransfer;
+  delete mLeftMakeNullableTransfer;
+  delete mRightMakeNullableTransfer;
 }
   
 RuntimeOperator * RuntimeSortMergeJoinOperatorType::create(RuntimeOperator::Services & s) const
@@ -3012,16 +3173,26 @@ RuntimeSortMergeJoinOperator::RuntimeSortMergeJoinOperator(RuntimeOperator::Serv
   mMatchFound(false)
 {
   mRuntimeContext = new InterpreterContext();
-  if (getMyOperatorType().mJoinType == SortMergeJoin::RIGHT_OUTER) {
+  if (getMyOperatorType().mJoinType == SortMergeJoin::FULL_OUTER ||
+      getMyOperatorType().mJoinType == SortMergeJoin::RIGHT_OUTER) {
     mLeftNulls = getMyOperatorType().mLeftNullMalloc.malloc();
+  }
+  if (getMyOperatorType().mJoinType == SortMergeJoin::FULL_OUTER ||
+      getMyOperatorType().mJoinType == SortMergeJoin::LEFT_OUTER) {
+    mRightNulls = getMyOperatorType().mRightNullMalloc.malloc();
   }
 }
 
 RuntimeSortMergeJoinOperator::~RuntimeSortMergeJoinOperator()
 {
   delete mRuntimeContext;
-  if (getMyOperatorType().mJoinType == SortMergeJoin::RIGHT_OUTER) {
+  if (getMyOperatorType().mJoinType == SortMergeJoin::FULL_OUTER ||
+      getMyOperatorType().mJoinType == SortMergeJoin::RIGHT_OUTER) {
     getMyOperatorType().mLeftNullFree.free(mLeftNulls);
+  }
+  if (getMyOperatorType().mJoinType == SortMergeJoin::FULL_OUTER ||
+      getMyOperatorType().mJoinType == SortMergeJoin::LEFT_OUTER) {
+    getMyOperatorType().mRightNullFree.free(mRightNulls);
   }
 }
 
@@ -3034,6 +3205,17 @@ void RuntimeSortMergeJoinOperator::start()
 void RuntimeSortMergeJoinOperator::onRightNonMatch(RuntimePort * port)
 {
   switch(getMyOperatorType().mJoinType) {
+  case SortMergeJoin::FULL_OUTER:
+    {
+      RecordBuffer out;
+      RecordBuffer tmp;
+      getMyOperatorType().mRightMakeNullableTransfer->execute(mRightInput, tmp, mRuntimeContext, false);
+      // TODO: Add move optimizations.
+      getMyOperatorType().mMatchTransfer->execute(mLeftNulls, tmp, out, mRuntimeContext, false, false);
+      write(port, out, false);
+      getMyOperatorType().mRightNullFree.free(tmp);
+      break;
+    }
   case SortMergeJoin::RIGHT_OUTER:
     {
       RecordBuffer out;
@@ -3045,13 +3227,39 @@ void RuntimeSortMergeJoinOperator::onRightNonMatch(RuntimePort * port)
   case SortMergeJoin::RIGHT_ANTI_SEMI:
     {
       RecordBuffer out;
-      if (NULL == getMyOperatorType().mMakeNullableTransfer) {
+      if (NULL == getMyOperatorType().mLeftMakeNullableTransfer) {
 	write(port, mRightInput, false);
 	mRightInput = NULL;
       } else {
-	getMyOperatorType().mMakeNullableTransfer->execute(mRightInput, out, mRuntimeContext, false);
+	getMyOperatorType().mLeftMakeNullableTransfer->execute(mRightInput, out, mRuntimeContext, false);
 	write(port, out, false);
       }
+      break;
+    }
+  default:
+    throw std::runtime_error("Invalid join type for non match processing");
+  }
+}
+
+void RuntimeSortMergeJoinOperator::onLeftNonMatch(RuntimePort * port, RecordBuffer buf)
+{
+  switch(getMyOperatorType().mJoinType) {
+  case SortMergeJoin::FULL_OUTER:
+    {
+      RecordBuffer out;
+      RecordBuffer tmp;
+      getMyOperatorType().mLeftMakeNullableTransfer->execute(buf, tmp, mRuntimeContext, false);
+      getMyOperatorType().mMatchTransfer->execute(tmp, mRightNulls, out, mRuntimeContext, false, false);
+      write(port, out, false);
+      getMyOperatorType().mLeftNullFree.free(tmp);
+      break;
+    }
+  case SortMergeJoin::LEFT_OUTER:
+    {
+      RecordBuffer out;
+      // TODO: Add move optimizations.
+      getMyOperatorType().mMatchTransfer->execute(buf, mRightNulls, out, mRuntimeContext, false, false);
+      write(port, out, false);
       break;
     }
   default:
@@ -3073,20 +3281,43 @@ void RuntimeSortMergeJoinOperator::onMatch(RuntimePort * port)
     {
       RecordBuffer out;
       RecordBuffer tmp;
-      getMyOperatorType().mMakeNullableTransfer->execute(mLastMatch, tmp, mRuntimeContext, false);
+      getMyOperatorType().mLeftMakeNullableTransfer->execute(mLastMatch, tmp, mRuntimeContext, false);
       getMyOperatorType().mMatchTransfer->execute(tmp, mRightInput, out, mRuntimeContext, false, false);		    
       getMyOperatorType().mLeftNullFree.free(tmp);
       write(port, out, false);
       break;
     }
+  case SortMergeJoin::LEFT_OUTER:
+    {
+      RecordBuffer out;
+      RecordBuffer tmp;
+      getMyOperatorType().mRightMakeNullableTransfer->execute(mRightInput, tmp, mRuntimeContext, false);
+      getMyOperatorType().mMatchTransfer->execute(mLastMatch, tmp, out, mRuntimeContext, false, false);		    
+      getMyOperatorType().mRightNullFree.free(tmp);
+      write(port, out, false);
+      break;
+    }
+  case SortMergeJoin::FULL_OUTER:
+    {
+      RecordBuffer out;
+      RecordBuffer tmp1;
+      RecordBuffer tmp2;
+      getMyOperatorType().mLeftMakeNullableTransfer->execute(mLastMatch, tmp1, mRuntimeContext, false);
+      getMyOperatorType().mRightMakeNullableTransfer->execute(mRightInput, tmp2, mRuntimeContext, false);
+      getMyOperatorType().mMatchTransfer->execute(tmp1, tmp2, out, mRuntimeContext, false, false);		    
+      getMyOperatorType().mLeftNullFree.free(tmp1);
+      getMyOperatorType().mRightNullFree.free(tmp2);
+      write(port, out, false);
+      break;
+    }
   case SortMergeJoin::RIGHT_SEMI:
     {
-      if (NULL == getMyOperatorType().mMakeNullableTransfer) {
+      if (NULL == getMyOperatorType().mLeftMakeNullableTransfer) {
 	write(port, mRightInput, false);
 	mRightInput = NULL;
       } else {
 	RecordBuffer out;
-	getMyOperatorType().mMakeNullableTransfer->execute(mRightInput, out, mRuntimeContext, false);
+	getMyOperatorType().mLeftMakeNullableTransfer->execute(mRightInput, out, mRuntimeContext, false);
 	write(port, out, false);
       }
       break;
@@ -3118,7 +3349,17 @@ void RuntimeSortMergeJoinOperator::onEvent(RuntimePort * port)
       while (0 > getMyOperatorType().mLeftRightKeyCompareFun->execute(mLeftInput,
 								      mRightInput,
 								      mRuntimeContext)) {
-	getMyOperatorType().mLeftFree.free(mLeftInput);
+	if (getMyOperatorType().mJoinType == SortMergeJoin::FULL_OUTER ||
+	    getMyOperatorType().mJoinType == SortMergeJoin::LEFT_OUTER) {
+	  requestWrite(0);
+	  mState = WRITE_LEFT_NON_MATCH_LT;
+	  return;
+	case WRITE_LEFT_NON_MATCH_LT:
+	  onLeftNonMatch(port, mLeftInput);
+	}
+	if (mLeftInput != RecordBuffer(NULL))
+	  getMyOperatorType().mLeftFree.free(mLeftInput);
+
 	requestRead(RuntimeSortMergeJoinOperatorType::LEFT_PORT);
 	mState = READ_LEFT_LT;
 	return;
@@ -3149,7 +3390,7 @@ void RuntimeSortMergeJoinOperator::onEvent(RuntimePort * port)
 									 mRuntimeContext));
 
 	while(!RecordBuffer::isEOS(mRightInput) &&
-	      0==getMyOperatorType().mLeftRightKeyCompareFun->execute(mLeftBuffer.back(),
+	      0==getMyOperatorType().mLeftRightKeyCompareFun->execute(mLeftBuffer.back().Buffer,
 								      mRightInput,
 								      mRuntimeContext)){ // Scan for matches
 	  mMatchFound = false;
@@ -3160,11 +3401,13 @@ void RuntimeSortMergeJoinOperator::onEvent(RuntimePort * port)
 	      mIt != mLeftBuffer.end();
 	      ++mIt) {
 	    if (NULL==getMyOperatorType().mEqFun ||
-		getMyOperatorType().mEqFun->execute(*mIt,
+		getMyOperatorType().mEqFun->execute(mIt->Buffer,
 						    mRightInput,
 						    mRuntimeContext)) {
-	      mMatchFound = true;
+	      mMatchFound = mIt->Matched = true;
 	      if (getMyOperatorType().mJoinType == SortMergeJoin::INNER ||
+		  getMyOperatorType().mJoinType == SortMergeJoin::FULL_OUTER ||
+		  getMyOperatorType().mJoinType == SortMergeJoin::LEFT_OUTER ||
 		  getMyOperatorType().mJoinType == SortMergeJoin::RIGHT_OUTER) {
 		if (mLastMatch) {
 		  requestWrite(0);
@@ -3175,14 +3418,17 @@ void RuntimeSortMergeJoinOperator::onEvent(RuntimePort * port)
 		    onMatch(port);
 		  }
 		}
-		mLastMatch = *mIt;
+		mLastMatch = mIt->Buffer;
 	      } else if (getMyOperatorType().mJoinType == SortMergeJoin::RIGHT_SEMI) {
-		mLastMatch = *mIt;
+		// Only processing a single match, so set last match and break from loop
+		mLastMatch = mIt->Buffer;
 		break;
 	      }
 	    }
 	  }
 	  if (mLastMatch && (getMyOperatorType().mJoinType == SortMergeJoin::INNER ||
+			     getMyOperatorType().mJoinType == SortMergeJoin::FULL_OUTER ||
+			     getMyOperatorType().mJoinType == SortMergeJoin::LEFT_OUTER ||
 			     getMyOperatorType().mJoinType == SortMergeJoin::RIGHT_OUTER ||
 			     getMyOperatorType().mJoinType == SortMergeJoin::RIGHT_SEMI)) {
 	    requestWrite(0);
@@ -3192,7 +3438,8 @@ void RuntimeSortMergeJoinOperator::onEvent(RuntimePort * port)
 	    {
 	      onMatch(port);
 	    }
-	  } else if (!mMatchFound && (getMyOperatorType().mJoinType == SortMergeJoin::RIGHT_OUTER ||
+	  } else if (!mMatchFound && (getMyOperatorType().mJoinType == SortMergeJoin::FULL_OUTER ||
+				      getMyOperatorType().mJoinType == SortMergeJoin::RIGHT_OUTER ||
 				      getMyOperatorType().mJoinType == SortMergeJoin::RIGHT_ANTI_SEMI)) {
 	    requestWrite(0);
 	    mState = WRITE_RIGHT_NON_MATCH;
@@ -3218,7 +3465,16 @@ void RuntimeSortMergeJoinOperator::onEvent(RuntimePort * port)
 	for(mIt = mLeftBuffer.begin();
 	    mIt != mLeftBuffer.end();
 	    ++mIt) {
-	  getMyOperatorType().mLeftFree.free(*mIt);
+	  if((getMyOperatorType().mJoinType == SortMergeJoin::FULL_OUTER ||
+	      getMyOperatorType().mJoinType == SortMergeJoin::LEFT_OUTER) &&
+	     !mIt->Matched) { 
+	    requestWrite(0);
+	    mState = WRITE_LEFT_NON_MATCH;
+	    return;
+	  case WRITE_LEFT_NON_MATCH:
+	    onLeftNonMatch(port, mIt->Buffer);	    
+	  } 
+	  getMyOperatorType().mLeftFree.free(mIt->Buffer);
 	}      
 	mLeftBuffer.clear();
       }
@@ -3230,6 +3486,7 @@ void RuntimeSortMergeJoinOperator::onEvent(RuntimePort * port)
 								     mRightInput,
 								     mRuntimeContext)) {
 	if (getMyOperatorType().mJoinType == SortMergeJoin::RIGHT_ANTI_SEMI ||
+	    getMyOperatorType().mJoinType == SortMergeJoin::FULL_OUTER ||
 	    getMyOperatorType().mJoinType == SortMergeJoin::RIGHT_OUTER) {
 	  requestWrite(0);
 	  mState = WRITE_RIGHT_NON_MATCH_LT;
@@ -3252,7 +3509,17 @@ void RuntimeSortMergeJoinOperator::onEvent(RuntimePort * port)
 
     // One of the two inputs is EOS.  Drain the other.
     while(!RecordBuffer::isEOS(mLeftInput)) {
-      getMyOperatorType().mLeftFree.free(mLeftInput);
+      if (getMyOperatorType().mJoinType == SortMergeJoin::FULL_OUTER ||
+	  getMyOperatorType().mJoinType == SortMergeJoin::LEFT_OUTER) {
+	requestWrite(0);
+	mState = WRITE_LEFT_NON_MATCH_DRAIN;
+	return;
+      case WRITE_LEFT_NON_MATCH_DRAIN:
+	onLeftNonMatch(port, mLeftInput);
+      } 
+      if (mLeftInput != RecordBuffer(NULL))
+	getMyOperatorType().mLeftFree.free(mLeftInput);
+
       requestRead(RuntimeSortMergeJoinOperatorType::LEFT_PORT);
       mState = READ_LEFT_DRAIN;
       return;
@@ -3261,7 +3528,8 @@ void RuntimeSortMergeJoinOperator::onEvent(RuntimePort * port)
     } 
 
     while(!RecordBuffer::isEOS(mRightInput)) {
-      if (getMyOperatorType().mJoinType == SortMergeJoin::RIGHT_OUTER ||
+      if (getMyOperatorType().mJoinType == SortMergeJoin::FULL_OUTER ||
+	  getMyOperatorType().mJoinType == SortMergeJoin::RIGHT_OUTER ||
 	  getMyOperatorType().mJoinType == SortMergeJoin::RIGHT_ANTI_SEMI) {
 	requestWrite(0);
 	mState = WRITE_RIGHT_NON_MATCH_DRAIN;
@@ -3517,3 +3785,136 @@ void LogicalUnpivot::create(class RuntimePlanBuilder& plan)
   plan.mapInputPort(this, 0, xjoin, 1);  
   plan.mapOutputPort(this, 0, xjoin, 0);  
 }
+
+LogicalSwitch::LogicalSwitch()
+  :
+  LogicalOperator(1,1,1,std::numeric_limits<uint32_t>::max()),
+  mSwitcher(NULL)
+{
+}
+
+LogicalSwitch::~LogicalSwitch()
+{
+  delete mSwitcher;
+}
+
+void LogicalSwitch::check(PlanCheckContext& log)
+{
+  // Validate the parameters
+  std::string predicate;
+  for(const_param_iterator it = begin_params();
+      it != end_params();
+      ++it) {
+    if (boost::algorithm::iequals(it->Name, "on")) {
+      predicate = boost::get<std::string>(it->Value);
+    } else {
+      checkDefaultParam(*it);
+    }
+  }
+
+  // TODO: If no predicate or limit specified, perhaps
+  // we should warn.
+  if (!predicate.size()) {
+    log.logError(*this, "Must set 'on' argument");
+  } else {
+    std::vector<RecordMember> emptyMembers;
+    RecordType emptyTy(emptyMembers);
+    std::vector<const RecordType *> inputs;
+    inputs.push_back(getInput(0)->getRecordType());
+    inputs.push_back(&emptyTy);
+    mSwitcher = new RecordTypeFunction(log,
+				       "switcher",
+				       inputs,
+				       predicate);
+  }
+
+  for(std::size_t i=0; i<size_outputs(); ++i) {
+    getOutput(i)->setRecordType(getInput(0)->getRecordType());
+  }
+}
+
+void LogicalSwitch::create(class RuntimePlanBuilder& plan)
+{
+  RuntimeOperatorType * opType = 
+    new RuntimeSwitchOperatorType(getInput(0)->getRecordType(),
+				  mSwitcher);
+  
+  plan.addOperatorType(opType);
+  plan.mapInputPort(this, 0, opType, 0);  
+  for(std::size_t i=0; i<size_outputs(); ++i) {
+    plan.mapOutputPort(this, i, opType, i);      
+  }
+}
+
+RuntimeOperator * RuntimeSwitchOperatorType::create(RuntimeOperator::Services & s) const
+{
+  return new RuntimeSwitchOperator(s, *this);
+}
+
+RuntimeSwitchOperator::RuntimeSwitchOperator(RuntimeOperator::Services& services, 
+					     const RuntimeSwitchOperatorType& opType)
+  :
+  RuntimeOperatorBase<RuntimeSwitchOperatorType>(services, opType),
+  mState(START),
+  mNumOutputs(0),
+  mRuntimeContext(new InterpreterContext())
+
+{
+}
+
+RuntimeSwitchOperator::~RuntimeSwitchOperator()
+{
+  delete mRuntimeContext;
+}
+
+void RuntimeSwitchOperator::start()
+{
+  mNumOutputs = getNumOutputs();
+  mState = START;
+  onEvent(NULL);
+}
+
+void RuntimeSwitchOperator::onEvent(RuntimePort * port)
+{
+  switch(mState) {
+  case START:
+    while(true) {
+      requestRead(0);
+      mState = READ;
+      return;
+    case READ:
+      read(port, mInput);
+
+      // Done executing the operator.
+      if (RecordBuffer::isEOS(mInput)) 
+	break;
+      
+      {
+	uint32_t output =  getMyOperatorType().mSwitcher->execute(mInput, 
+								  RecordBuffer(),
+								  mRuntimeContext);
+      
+	requestWrite(output % mNumOutputs);
+      }
+      mState = WRITE;
+      return;
+    case WRITE:
+      write(port, mInput, false);
+    }
+    
+    for(mNumOutputs = 0; mNumOutputs < getNumOutputs(); ++mNumOutputs) {
+      // Close up
+      requestWrite(mNumOutputs);
+      mState = WRITE_EOF;
+      return;
+    case WRITE_EOF:
+      write(port, RecordBuffer(), true);
+    }
+  }
+}
+
+void RuntimeSwitchOperator::shutdown()
+{
+}
+
+

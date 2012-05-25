@@ -1053,6 +1053,11 @@ public:
   class bucket_page
   {
   public:
+    // The first PageEntries-1 bits here are used as
+    // markers for when a Value has been matched in a 
+    // join.  This is required for outer join processing.
+    // The remaining bits can be used for a Bloom filter when
+    // I take the time to get that working.
     uint64_t Bitmap;
     uint32_t Hash[PageEntries];
     RecordBuffer Value[PageEntries-1];
@@ -1072,7 +1077,14 @@ public:
       memset(&Hash[0], 0, sizeof(Hash));
       Hash[0] = hashValue;
       Value[0] = value;
-      Bitmap |= (1ULL << (value % 64));
+    }
+    void mark_value(const uint32_t * hashPtr)
+    {
+      Bitmap |= (1UL << (hashPtr - &Hash[0]));
+    }
+    bool marked(const uint32_t * hashPtr) const
+    {
+      return (Bitmap & (1UL << (hashPtr - &Hash[0]))) != 0;
     }
   };
 
@@ -1165,6 +1177,25 @@ public:
     }
   };
 
+  class scan_true_predicate
+  {
+  public:
+    bool test(bucket_page * , uint32_t * hashPtr) 
+    {
+      return true;
+    }
+  };
+
+  class scan_not_marked_predicate
+  {
+  public:
+    bool test(bucket_page * p, uint32_t * hashPtr) 
+    {
+      return !p->marked(hashPtr);
+    }
+  };
+
+  template<typename _Pred>
   class scan_iterator
   {
   public:
@@ -1176,13 +1207,38 @@ public:
     bucket_page * mBucketEnd;
     // Current position within the bucket_page::Hash array
     uint32_t * mHashPtr;
+    // Predicate for testing output
+    _Pred mPredicate;
     // State of the coroutine
     enum State { START, NEXT, DONE };
     State mState;
 
-    scan_iterator();
-    scan_iterator(paged_hash_table& table);
-    void init(paged_hash_table& table);
+    scan_iterator()
+      :
+      mPage(NULL),
+      mBucket(NULL),
+      mBucketEnd(NULL),
+      mHashPtr(NULL),
+      mState(START)
+    {
+    }
+    scan_iterator(paged_hash_table& table)
+      :
+      mPage(table.mBuckets),
+      mBucket(table.mBuckets),
+      mBucketEnd(table.mBuckets + table.mNumBuckets),
+      mHashPtr(NULL),
+      mState(START)
+    {
+    }
+    void init(paged_hash_table& table)
+    {
+      mPage = table.mBuckets;
+      mBucket = table.mBuckets;
+      mBucketEnd = table.mBuckets + table.mNumBuckets;
+      mHashPtr = NULL;
+      mState = START;
+    }
     bucket_page * next_page()
     {
       return mPage;
@@ -1210,6 +1266,8 @@ public:
 	while(p != NULL) {
 	  // Start of page.  Iterate over the page
 	  for(mHashPtr = &p->Hash[0]; *mHashPtr != 0; ++mHashPtr) {
+	    if (!mPredicate.test(p, mHashPtr))
+	      continue;
 	    mState = NEXT;
 	    return true;
 	  case NEXT:
@@ -1248,6 +1306,9 @@ public:
       return false;
     }
   };
+
+  typedef scan_iterator<scan_true_predicate> scan_all_iterator;
+  typedef scan_iterator<scan_not_marked_predicate> scan_not_marked_iterator;
 
   // Where am I within the bucket
   template <class _Pred>
@@ -1335,24 +1396,13 @@ public:
       switch(mState) {
       case START:
 	while(p != NULL) {
-	  // TODO: Bitmap logic isn't quite baked.  Fix it.
-	  // {
-	  // uint64_t bm = p->Bitmap;
-	  // uint64_t mask = (~(1ULL << (mQueryHashValue % 64)));
-	  // if(0 == (bm & mask)) {
-	  //   // We are at the end of a full node.  Advance and continue.
-	  //   paged_hash_table::NumBitmapFilters += 1;
-	  //   advance_page();
-	  //   p = next_page();
-	  //   continue;
-	  // } 
-	  // }
 	  // Start of page.  Iterate over the page
 	  for(mHashPtr = &p->Hash[0]; *mHashPtr != 0; ++mHashPtr) {
 	    BOOST_ASSERT(mHashPtr <= &p->Hash[Sentinel]);
 	    if(*mHashPtr == mQueryHashValue) {
 	      if(mQueryPredicate.equals(value(mHashPtr, p), ctxt)) {
-	      // Match.  Return with true.
+	      // Match.  Mark as such. Return with true.
+		p->mark_value(mHashPtr);
 	      mState = NEXT;
 	      return true;
 	    case NEXT:
@@ -1399,7 +1449,6 @@ public:
       *mHashPtr = hashValue;
       bucket_page * p = next_page();
       p->Value[mHashPtr - &p->Hash[0]] = value;
-      p->Bitmap |= (1ULL << (hashValue % 64));
     }
   };
 
@@ -1500,7 +1549,7 @@ private:
   class InterpreterContext * mRuntimeContext;
   paged_hash_table mTable;
   paged_hash_table::query_iterator<paged_hash_table::probe_predicate> mSearchIterator;
-  paged_hash_table::scan_iterator mScanIterator;
+  paged_hash_table::scan_all_iterator mScanIterator;
   const RuntimeHashGroupByOperatorType & getHashGroupByType() { return *reinterpret_cast<const RuntimeHashGroupByOperatorType *>(&getOperatorType()); }
 public:
   RuntimeHashGroupByOperator(RuntimeOperator::Services& services, const RuntimeHashGroupByOperatorType& opType);
@@ -1674,7 +1723,7 @@ class HashJoin : public LogicalOperator
 {
 public:
   enum { TABLE_PORT=0, PROBE_PORT=1 };
-  enum JoinType { INNER, RIGHT_OUTER, RIGHT_SEMI, RIGHT_ANTI_SEMI };
+  enum JoinType { INNER, FULL_OUTER, LEFT_OUTER, RIGHT_OUTER, RIGHT_SEMI, RIGHT_ANTI_SEMI };
 private:
   const RecordType * mTableInput;
   const RecordType * mProbeInput;
@@ -1683,6 +1732,8 @@ private:
   RecordTypeFunction * mEq;
   RecordTypeTransfer2 * mTransfer;
   RecordTypeTransfer * mSemiJoinTransfer;
+  RecordTypeTransfer * mProbeMakeNullableTransfer;
+  RecordTypeTransfer * mTableMakeNullableTransfer;
   JoinType mJoinType;
   bool mJoinOne;
 
@@ -1735,8 +1786,12 @@ private:
   IQLTransferModule * mSemiJoinTransferModule;
   HashJoin::JoinType mJoinType;
   bool mJoinOne;
+  IQLTransferModule * mProbeMakeNullableTransferModule;
   RecordTypeMalloc mProbeNullMalloc;
   RecordTypeFree mProbeNullFree;
+  IQLTransferModule * mTableMakeNullableTransferModule;
+  RecordTypeMalloc mTableNullMalloc;
+  RecordTypeFree mTableNullFree;
   // Serialization
   friend class boost::serialization::access;
   template <class Archive>
@@ -1752,8 +1807,12 @@ private:
     ar & BOOST_SERIALIZATION_NVP(mSemiJoinTransferModule);
     ar & BOOST_SERIALIZATION_NVP(mJoinType);
     ar & BOOST_SERIALIZATION_NVP(mJoinOne);
+    ar & BOOST_SERIALIZATION_NVP(mProbeMakeNullableTransferModule);
     ar & BOOST_SERIALIZATION_NVP(mProbeNullMalloc);    
     ar & BOOST_SERIALIZATION_NVP(mProbeNullFree);    
+    ar & BOOST_SERIALIZATION_NVP(mTableMakeNullableTransferModule);
+    ar & BOOST_SERIALIZATION_NVP(mTableNullMalloc);    
+    ar & BOOST_SERIALIZATION_NVP(mTableNullFree);    
   }
   RuntimeHashJoinOperatorType()
     :
@@ -1761,8 +1820,11 @@ private:
     mProbeHashFun(NULL),
     mEqFun(NULL),
     mTransferModule(NULL),
+    mSemiJoinTransferModule(NULL),
     mJoinType(HashJoin::INNER),
-    mJoinOne(false)
+    mJoinOne(false),
+    mProbeMakeNullableTransferModule(NULL),
+    mTableMakeNullableTransferModule(NULL)
   {
   }
 public:
@@ -1783,7 +1845,9 @@ public:
     mTransferModule(transferFun->create()),
     mSemiJoinTransferModule(NULL),
     mJoinType(HashJoin::INNER),
-    mJoinOne(joinOne)
+    mJoinOne(joinOne),
+    mProbeMakeNullableTransferModule(NULL),
+    mTableMakeNullableTransferModule(NULL)    
   {
   }
   RuntimeHashJoinOperatorType(const RecordTypeFree & tableFreeFunctor, 
@@ -1804,16 +1868,20 @@ public:
     mSemiJoinTransferModule(transferFun && !transferFun->isIdentity() ? 
 			    transferFun->create() : NULL),
     mJoinType(joinType),
-    mJoinOne(false)
+    mJoinOne(false),
+    mProbeMakeNullableTransferModule(NULL),
+    mTableMakeNullableTransferModule(NULL)
   {
   }
-  RuntimeHashJoinOperatorType(const RecordTypeFree & tableFreeFunctor, 
+  RuntimeHashJoinOperatorType(HashJoin::JoinType joinType,
+			      const RecordTypeFree & tableFreeFunctor, 
 			      const RecordTypeFree & probeFreeFunctor,
 			      const RecordTypeFunction * tableHashFun,
 			      const RecordTypeFunction * probeHashFun,
 			      const RecordTypeFunction * eqFun,
 			      const RecordTypeTransfer2 * transfer2Fun,
-			      const RecordTypeTransfer * transferFun)
+			      const RecordTypeTransfer * tableNullableTransferFun,
+			      const RecordTypeTransfer * probeNullableTransferFun)
     :
     RuntimeOperatorType("RuntimeHashJoinOperatorType"),
     mTableFree(tableFreeFunctor),
@@ -1822,11 +1890,15 @@ public:
     mProbeHashFun(probeHashFun->create()),
     mEqFun(eqFun->create()),
     mTransferModule(transfer2Fun->create()),
-    mSemiJoinTransferModule(transferFun->create()),
-    mJoinType(HashJoin::RIGHT_OUTER),
+    mSemiJoinTransferModule(NULL),
+    mJoinType(joinType),
     mJoinOne(false),
-    mProbeNullMalloc(transferFun->getTarget()->getMalloc()),
-    mProbeNullFree(transferFun->getTarget()->getFree())
+    mProbeMakeNullableTransferModule(probeNullableTransferFun->create()),
+    mProbeNullMalloc(probeNullableTransferFun->getTarget()->getMalloc()),
+    mProbeNullFree(probeNullableTransferFun->getTarget()->getFree()),
+    mTableMakeNullableTransferModule(tableNullableTransferFun->create()),
+    mTableNullMalloc(tableNullableTransferFun->getTarget()->getMalloc()),
+    mTableNullFree(tableNullableTransferFun->getTarget()->getFree())
   {
   }
   
@@ -1838,14 +1910,17 @@ public:
 class RuntimeHashJoinOperator : public RuntimeOperator
 {
 private:
-  enum State { START, READ_TABLE, READ_PROBE, WRITE, WRITE_UNMATCHED, WRITE_EOS };
+  enum State { START, READ_TABLE, READ_PROBE, WRITE, WRITE_UNMATCHED, WRITE_TABLE_UNMATCHED, WRITE_EOS };
   State mState;
   class InterpreterContext * mRuntimeContext;
   paged_hash_table mTable;
   paged_hash_table::query_iterator<paged_hash_table::probe_predicate> mSearchIterator;
   RecordBuffer mNullProbeRecord;
+  RecordBuffer mNullTableRecord;
+  paged_hash_table::scan_not_marked_iterator mScanIterator;
   const RuntimeHashJoinOperatorType & getHashJoinType() { return *reinterpret_cast<const RuntimeHashJoinOperatorType *>(&getOperatorType()); }
 
+  RecordBuffer onTableNonMatch(RecordBuffer tableBuf);
   RecordBuffer onRightOuterMatch();
   RecordBuffer onRightOuterNonMatch();
   RecordBuffer onInner();
@@ -2042,7 +2117,9 @@ public:
 class SortMergeJoin : public LogicalOperator
 {
 public:
-  enum JoinType { INNER, RIGHT_OUTER, RIGHT_SEMI, RIGHT_ANTI_SEMI };
+  enum JoinType { INNER, FULL_OUTER, LEFT_OUTER, RIGHT_OUTER, RIGHT_SEMI, RIGHT_ANTI_SEMI };
+
+  static bool isInnerOrOuter(JoinType joinType);
 
   static RecordTypeTransfer * makeNullableTransfer(DynamicRecordContext& ctxt,
 						   const RecordType * input);
@@ -2098,7 +2175,8 @@ private:
   RecordTypeFunction * mLeftRightKeyCompare;
   RecordTypeFunction * mResidual;
   RecordTypeTransfer2 * mMatchTransfer;
-  RecordTypeTransfer * mMakeNullableTransfer;
+  RecordTypeTransfer * mLeftMakeNullableTransfer;
+  RecordTypeTransfer * mRightMakeNullableTransfer;
 
   void init(DynamicRecordContext & ctxt,
 	    const std::vector<std::string>& leftKeys,
@@ -2145,10 +2223,13 @@ private:
   IQLFunctionModule * mEqFun;
   // What to do when we have a match.
   IQLTransferModule2 * mMatchTransfer;
-  // For right outer joins, coerce left inputs
+  // For right/full outer joins, coerce left inputs
   // to be nullable as needed.
   // For (anti) semi joins we use this to transfer.
-  IQLTransferModule * mMakeNullableTransfer;
+  IQLTransferModule * mLeftMakeNullableTransfer;
+  // For left/full outer joins, coerce right inputs
+  // to be nullable as needed.
+  IQLTransferModule * mRightMakeNullableTransfer;
   // How to create new records.
   // How to free
   RecordTypeFree mLeftFree;
@@ -2157,6 +2238,10 @@ private:
   // for outer joins.
   RecordTypeMalloc mLeftNullMalloc;
   RecordTypeFree mLeftNullFree;
+  // Create and delete nullable right records
+  // for outer joins.
+  RecordTypeMalloc mRightNullMalloc;
+  RecordTypeFree mRightNullFree;
 
   // Serialization
   friend class boost::serialization::access;
@@ -2170,11 +2255,14 @@ private:
     ar & BOOST_SERIALIZATION_NVP(mLeftRightKeyCompareFun);
     ar & BOOST_SERIALIZATION_NVP(mEqFun);    
     ar & BOOST_SERIALIZATION_NVP(mMatchTransfer);    
-    ar & BOOST_SERIALIZATION_NVP(mMakeNullableTransfer);    
+    ar & BOOST_SERIALIZATION_NVP(mLeftMakeNullableTransfer);    
+    ar & BOOST_SERIALIZATION_NVP(mRightMakeNullableTransfer);    
     ar & BOOST_SERIALIZATION_NVP(mLeftFree);    
     ar & BOOST_SERIALIZATION_NVP(mRightFree);    
     ar & BOOST_SERIALIZATION_NVP(mLeftNullMalloc);    
     ar & BOOST_SERIALIZATION_NVP(mLeftNullFree);    
+    ar & BOOST_SERIALIZATION_NVP(mRightNullMalloc);    
+    ar & BOOST_SERIALIZATION_NVP(mRightNullFree);    
   }
   RuntimeSortMergeJoinOperatorType()
     :
@@ -2185,7 +2273,8 @@ private:
     mLeftRightKeyCompareFun(NULL),
     mEqFun(NULL),
     mMatchTransfer(NULL),
-    mMakeNullableTransfer(NULL)
+    mLeftMakeNullableTransfer(NULL),
+    mRightMakeNullableTransfer(NULL)
   {
   }
 public:
@@ -2197,7 +2286,8 @@ public:
 				   const RecordTypeFunction * leftRightKeyCompare,
 				   const RecordTypeFunction * eqFun,
 				   const RecordTypeTransfer2 * matchTransfer,
-				   const RecordTypeTransfer * makeNullableTransfer)
+				   const RecordTypeTransfer * leftMakeNullableTransfer,
+				   const RecordTypeTransfer * rightMakeNullableTransfer)
     :
     RuntimeOperatorType("RuntimeSortMergeJoinOperatorType"),
     mJoinType(joinType),
@@ -2206,14 +2296,21 @@ public:
     mLeftRightKeyCompareFun(leftRightKeyCompare->create()),
     mEqFun(eqFun ? eqFun->create() : NULL),
     mMatchTransfer(matchTransfer ? matchTransfer->create() : NULL),
-    mMakeNullableTransfer(makeNullableTransfer && 
-			  (joinType==SortMergeJoin::RIGHT_OUTER ||
-			   !makeNullableTransfer->isIdentity()) ? 
-			  makeNullableTransfer->create() : NULL),
+    mLeftMakeNullableTransfer(leftMakeNullableTransfer && 
+			  (joinType==SortMergeJoin::FULL_OUTER ||
+			   joinType==SortMergeJoin::RIGHT_OUTER ||
+			   !leftMakeNullableTransfer->isIdentity()) ? 
+			  leftMakeNullableTransfer->create() : NULL),
+    mRightMakeNullableTransfer(rightMakeNullableTransfer && 
+			  (joinType==SortMergeJoin::FULL_OUTER ||
+			   joinType==SortMergeJoin::LEFT_OUTER) ? 
+			  rightMakeNullableTransfer->create() : NULL),
     mLeftFree(leftInput->getFree()),
     mRightFree(rightInput->getFree()),
-    mLeftNullMalloc(makeNullableTransfer->getTarget()->getMalloc()),
-    mLeftNullFree(makeNullableTransfer->getTarget()->getFree())
+    mLeftNullMalloc(leftMakeNullableTransfer->getTarget()->getMalloc()),
+    mLeftNullFree(leftMakeNullableTransfer->getTarget()->getFree()),
+    mRightNullMalloc(rightMakeNullableTransfer->getTarget()->getMalloc()),
+    mRightNullFree(rightMakeNullableTransfer->getTarget()->getFree())
   {
   }
   ~RuntimeSortMergeJoinOperatorType();
@@ -2232,15 +2329,35 @@ private:
 	       READ_RIGHT_EQ, 
 	       WRITE_MATCH, 
 	       WRITE_LAST_MATCH, 
+	       WRITE_LEFT_NON_MATCH, 
 	       WRITE_RIGHT_NON_MATCH, 
 	       READ_LEFT_DRAIN,
 	       READ_RIGHT_DRAIN,
+	       WRITE_LEFT_NON_MATCH_LT, 
 	       WRITE_RIGHT_NON_MATCH_LT, 
+	       WRITE_LEFT_NON_MATCH_DRAIN, 
 	       WRITE_RIGHT_NON_MATCH_DRAIN, 
 	       WRITE_EOS };
   State mState;
   // Stores a sort run; assume fits in memory for now.
-  typedef std::vector<RecordBuffer> left_buffer_type;
+  class RunEntry
+  {
+  public:
+    RecordBuffer Buffer;
+    bool Matched;
+    RunEntry()
+      :
+      Matched(false)
+    {
+    }
+    RunEntry(RecordBuffer buf)
+      :
+      Buffer(buf),
+      Matched(false)
+    {
+    }
+  };
+  typedef std::vector<RunEntry> left_buffer_type;
   left_buffer_type mLeftBuffer;
   // One past the last record in the left buffer.
   RecordBuffer mLeftInput;
@@ -2255,11 +2372,13 @@ private:
   // Remember a match that was found.  We delay writing until
   // we find a second match so we can apply move semantics optimization.
   RecordBuffer mLastMatch;
-  // NULLs for left input
+  // NULLs for left,right input in outer join processing
   RecordBuffer mLeftNulls;
+  RecordBuffer mRightNulls;
 
   void onMatch(RuntimePort * port);
   void onRightNonMatch(RuntimePort * port);
+  void onLeftNonMatch(RuntimePort * port, RecordBuffer buf);
 public:
   RuntimeSortMergeJoinOperator(RuntimeOperator::Services& services, const RuntimeSortMergeJoinOperatorType& opType);
   ~RuntimeSortMergeJoinOperator();
@@ -2321,6 +2440,67 @@ public:
   ~LogicalUnpivot();
   void check(PlanCheckContext& log);
   void create(class RuntimePlanBuilder& plan);    
+};
+
+class LogicalSwitch : public LogicalOperator
+{
+private:
+  RecordTypeFunction * mSwitcher;
+public:
+  LogicalSwitch();
+  ~LogicalSwitch();
+  void check(PlanCheckContext& log);
+  void create(class RuntimePlanBuilder& plan);  
+};
+
+class RuntimeSwitchOperatorType : public RuntimeOperatorType
+{
+  friend class RuntimeSwitchOperator;
+private:
+  IQLFunctionModule * mSwitcher;
+  // Serialization
+  friend class boost::serialization::access;
+  template <class Archive>
+  void serialize(Archive & ar, const unsigned int version)
+  {
+    ar & BOOST_SERIALIZATION_BASE_OBJECT_NVP(RuntimeOperatorType);
+    ar & BOOST_SERIALIZATION_NVP(mSwitcher);    
+  }
+  RuntimeSwitchOperatorType()
+    :
+    mSwitcher(NULL)
+  {
+  }
+public:
+  RuntimeSwitchOperatorType(const RecordType * input,
+			    const RecordTypeFunction * switcher)
+    :
+    RuntimeOperatorType("RuntimeSwitchOperatorType"),
+    mSwitcher(switcher->create())
+  {
+  }
+  ~RuntimeSwitchOperatorType() 
+  {
+    delete mSwitcher; 
+  }
+  RuntimeOperator * create(RuntimeOperator::Services & s) const;
+};
+
+class RuntimeSwitchOperator : public RuntimeOperatorBase<RuntimeSwitchOperatorType>
+{
+private:
+  enum State { START, READ, WRITE, WRITE_EOF };
+  State mState;
+  uint32_t mNumOutputs;
+  RecordBuffer mInput;
+  class InterpreterContext * mRuntimeContext;
+public:
+  RuntimeSwitchOperator(RuntimeOperator::Services& services, 
+			const RuntimeSwitchOperatorType& opType);
+  ~RuntimeSwitchOperator();
+  void start();
+  void onEvent(RuntimePort * port);
+  void shutdown();
 };
 
 #endif
