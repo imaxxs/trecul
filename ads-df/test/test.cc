@@ -517,7 +517,7 @@ BOOST_AUTO_TEST_CASE(testPagedHashTable)
     BOOST_CHECK_EQUAL(false, qit.next(&runtimeCtxt));
 
     // Dump contents with scan iterator
-    paged_hash_table::scan_iterator sit(table);
+    paged_hash_table::scan_all_iterator sit(table);
     int32_t cnt=0;
     while(sit.next(&runtimeCtxt)) {
       cnt += 1;
