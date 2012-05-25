@@ -350,12 +350,15 @@ class SerialOrganizedTableFile
 {
 private:
   int32_t mMinorVersion;
+  std::string mDate;
   PathPtr mPath;
 public:
   SerialOrganizedTableFile(int32_t minorVersion,
+			   const std::string& dateField,
 			   PathPtr path)
     :
     mMinorVersion(minorVersion),
+    mDate(dateField),
     mPath(path)
   {
   }
@@ -364,14 +367,20 @@ public:
   {
     return mMinorVersion;
   }
+  const std::string& getDate() const 
+  {
+    return mDate;
+  }
   PathPtr getPath() const
   {
     return mPath;
   }
 
-  static SerialOrganizedTableFilePtr get(int32_t minorVersion, PathPtr path)
+  static SerialOrganizedTableFilePtr get(int32_t minorVersion, 
+					 const std::string& dateField,
+					 PathPtr path)
   {
-    return SerialOrganizedTableFilePtr(new SerialOrganizedTableFile(minorVersion, path));
+    return SerialOrganizedTableFilePtr(new SerialOrganizedTableFile(minorVersion, dateField, path));
   }
 };
 
@@ -429,6 +438,7 @@ private:
   class RecordTypeFunction * mPredicate;
   std::vector<class FieldAddress> mFields;
   std::size_t mMinorVersionField;
+  std::size_t mDateField;
   class InterpreterContext * mRuntimeContext;
   
   // Recurse down directory path to get to serials.

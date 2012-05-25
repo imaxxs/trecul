@@ -650,6 +650,7 @@ SerialOrganizedTable::SerialOrganizedTable(int32_t commonVersion,
   mRecordType(NULL),
   mPredicate(NULL),
   mMinorVersionField(0),
+  mDateField(1),
   mRuntimeContext(NULL)
 {
   // These are the path components of the table.
@@ -671,6 +672,7 @@ SerialOrganizedTable::SerialOrganizedTable(int32_t commonVersion,
   mFields.push_back(mRecordType->getFieldAddress("Date"));
   mFields.push_back(mRecordType->getFieldAddress("BatchId"));
   mMinorVersionField = 0;
+  mDateField = 1;
 
   std::vector<RecordMember> emptyMembers;
   const RecordType * emptyTy = RecordType::get(*mContext, emptyMembers);
@@ -729,9 +731,10 @@ void SerialOrganizedTable::bindComponent(FileSystem * fs,
 	mPredicate->execute(buf, RecordBuffer(), mRuntimeContext) : true;
       const char * minorVersionStr = mFields[mMinorVersionField].getVarcharPtr(buf)->Ptr;
       int32_t minorVersion = boost::lexical_cast<int32_t>(minorVersionStr);
+      std::string dateStr(mFields[mDateField].getVarcharPtr(buf)->Ptr);
       mRecordType->getFree().free(buf);
       if (good)
-	mSerialPaths.push_back(SerialOrganizedTableFile::get(minorVersion,
+	mSerialPaths.push_back(SerialOrganizedTableFile::get(minorVersion, dateStr,
 							     Path::get(p, (*pit)->getPath())));
     }
   } else {
