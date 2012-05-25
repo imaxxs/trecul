@@ -36,6 +36,7 @@
 
 #include <boost/algorithm/string/case_conv.hpp>
 #include <boost/algorithm/string/predicate.hpp>
+#include <boost/algorithm/string/trim.hpp>
 #include <boost/bind.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/interprocess/file_mapping.hpp>
@@ -489,8 +490,14 @@ SerialChunkStrategy::~SerialChunkStrategy()
 void SerialChunkStrategy::expand(const PathPtr & uri,
 				 int32_t numPartitions)
 {
-  // No expansion
-  mUri = uri;
+  // No expansion, but make sure that the URI is a proper
+  // directory (i.e. has a trailing slash)
+  std::string uriStr = uri->toString();
+  boost::algorithm::trim(uriStr);
+  if (uriStr[uriStr.size() - 1] != '/') {
+    uriStr += "/";
+  }
+  mUri = Path::get(uriStr);
 }
 
 void SerialChunkStrategy::getFilesForPartition(int32_t partition,
@@ -498,31 +505,14 @@ void SerialChunkStrategy::getFilesForPartition(int32_t partition,
 {
   // get file that matches the serial.
   std::ostringstream ss;
-  ss << "serial_" << std::setw(5) << std::setfill('0') << partition;
+  ss << "serial_" << std::setw(5) << std::setfill('0') << partition << ".gz";
   std::string sn(ss.str());
-  typedef std::vector<boost::shared_ptr<FileStatus> > fstats;
-  fstats ls;
-  {
-    // use scope to hide variable fs.
-    // Get the file system for the uri
-    FileSystem * fs = FileSystem::get(mUri->getUri());
-    fs->list(mUri, ls);
-    FileSystem::release(fs);
-  }
-  for(fstats::iterator fit = ls.begin();
-      fit != ls.end();
-      ++fit) {
-    const std::string& fname((*fit)->getPath()->toString());
-    // Extract out the filename from the full path and check what
-    // serial it is.
-    boost::filesystem::path fsPath((*fit)->getPath()->getUri()->getPath());
-    std::string stm = fsPath.stem();
-    if (stm.size() >= sn.size() &&
-	boost::algorithm::equals(sn, stm.substr(0, sn.size()))) {
-      files.push_back(boost::make_shared<FileChunk>(fname, 
-						    0,
-						    std::numeric_limits<uint64_t>::max()));
-    }
-  }    
+  // Get the file system for the uri
+  AutoFileSystem fs(mUri->getUri());
+  PathPtr serialPath = Path::get(mUri, ss.str());
+  if (!fs->exists(serialPath)) return;
+  const std::string& fname(serialPath->toString());
+  files.push_back(boost::make_shared<FileChunk>(fname, 0,
+						std::numeric_limits<uint64_t>::max()));
 }
 
