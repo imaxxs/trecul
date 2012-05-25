@@ -476,12 +476,14 @@ void LogicalFileRead::internalCreate(class RuntimePlanBuilder& plan)
 
 LogicalFileWrite::LogicalFileWrite()
   :
-  mMode("binary")
+  mMode("binary"),
+  mFileNameExpr(NULL)
 {
 }
 
 LogicalFileWrite::~LogicalFileWrite()
 {
+  delete mFileNameExpr;
 }
 
 void LogicalFileWrite::buildHeader(bool isFormatHeader)
@@ -523,7 +525,9 @@ void LogicalFileWrite::check(PlanCheckContext& ctxt)
   for(const_param_iterator it = begin_params();
       it != end_params();
       ++it) {
-    if (it->equals("file")) {
+    if (it->equals("connect")) {
+      mConnect = getStringValue(ctxt, *it);
+    } else if (it->equals("file")) {
       mFile = getStringValue(ctxt, *it);
     } else if (it->equals("format")) {
       buildHeader(true);
@@ -545,24 +549,31 @@ void LogicalFileWrite::check(PlanCheckContext& ctxt)
       !boost::algorithm::iequals("text", mMode)) {
     ctxt.logError(*this, "mode parameter must be \"text\" or \"binary\"");
   }
-  
-  checkPath(ctxt, mFile);
+
+  if (0==mConnect.size()) {
+    checkPath(ctxt, mFile);
+  } else {
+    std::string xfer = mFile + " AS out";
+    mFileNameExpr = new RecordTypeTransfer(ctxt, "fileNameExpr", 
+					   getInput(0)->getRecordType(), xfer);
+  }
   if (mHeaderFile.size()) 
     checkPath(ctxt, mHeaderFile);
 }
 
 void LogicalFileWrite::create(class RuntimePlanBuilder& plan)
 {
-  URI uri(mFile.c_str());
+  URI uri(mConnect.size() ? mConnect.c_str() : mFile.c_str());
   RuntimeOperatorType * opType = NULL;
   if (boost::algorithm::iequals(uri.getScheme(), "hdfs")) {
     opType = new RuntimeHdfsWriteOperatorType("write",
 					      getInput(0)->getRecordType(),
 					      uri.getHost(),
 					      uri.getPort(),
-					      uri.getPath(),
+					      mConnect.size() ? "" : uri.getPath(),
 					      mHeader,
-					      mHeaderFile);
+					      mHeaderFile,
+					      mFileNameExpr);
   } else if (boost::algorithm::iequals("binary", mMode)) {
     opType = new InternalFileWriteOperatorType("write",
 					       getInput(0)->getRecordType(),

@@ -48,11 +48,30 @@
 #include "GraphBuilder.hh"
 #include "FileSystem.hh"
 
+class DataflowPartitioner : public HadoopPipes::Partitioner
+{
+private:
+  RuntimeHadoopEmitOperator * mEmitter;
+public:
+  DataflowPartitioner (RuntimeHadoopEmitOperator * emitter)
+    :
+    mEmitter(emitter)
+  {
+    std::cout << "Creating partitioner " << std::endl;
+  }
+
+  int partition(const std::string& key, int numOfReduces)
+  {
+    return (int) mEmitter->partition(key, (uint32_t) numOfReduces);
+  }
+};
+ 
 class DataflowMapReducer
 {
 private:
   boost::shared_ptr<RuntimeProcess> mProcess;
   NativeInputQueueOperator * mInput;
+  RuntimeHadoopEmitOperator * mEmit;
   int32_t mRecordsQueued;
 
   /**
@@ -76,6 +95,10 @@ public:
 	   const std::string& val);
   void close();
   /**
+   * Create a partitioner if needed.
+   */
+  DataflowPartitioner * createPartitioner();
+  /**
    * Read a plan file (either mapper or reducer).  We have
    * arranged for Hadoop to symlink these into the current
    * working directory of the map reduce task.
@@ -91,6 +114,7 @@ DataflowMapReducer::DataflowMapReducer(int32_t partition,
 				       bool isMap)
   : 
   mInput(NULL), 
+  mEmit(NULL),
   mRecordsQueued(0)
 {
   mProcess = boost::make_shared<RuntimeProcess>(partition,partition,
@@ -121,11 +145,20 @@ DataflowMapReducer::DataflowMapReducer(int32_t partition,
 			     "can have at most one emit operator");
   } else if (emitOps.size() == 1) {
     emitOps[0]->setContext(&context);
+    if (isMap) {
+      mEmit = emitOps[0];
+    }
   }
 
   std::cout << "Calling RuntimeProcess::runInit" << std::endl;
   mProcess->runInit();
   std::cout << "Finished calling RuntimeProcess::runInit" << std::endl;
+}
+
+DataflowPartitioner * DataflowMapReducer::createPartitioner() 
+{
+  return mEmit != NULL && mEmit->hasPartitioner() ?
+    new DataflowPartitioner(mEmit) : NULL;
 }
 
 void DataflowMapReducer::getEncodedPlan(const std::string& planFileName,
@@ -340,6 +373,11 @@ public:
   void close() {
     mMapReducer->close();
   }
+
+  DataflowPartitioner * createPartitioner() 
+  {
+    return mMapReducer->createPartitioner();
+  }
 };
 
 class DataflowReduce: public HadoopPipes::Reducer {
@@ -391,6 +429,46 @@ public:
   }
 };
 
+class DataflowTaskFactory : public HadoopPipes::Factory
+{
+private:
+  DataflowMap * mMap;
+  DataflowReduce * mReduce;
+
+public:
+  DataflowTaskFactory() 
+    :
+    mMap(NULL),
+    mReduce(NULL)
+  {
+  }
+
+  HadoopPipes::Mapper* createMapper(HadoopPipes::MapContext& context) const 
+  {
+    BOOST_ASSERT(mMap == NULL);
+    // Pipes made these const; that doesn't work for us so cast away...
+    DataflowTaskFactory * This = const_cast<DataflowTaskFactory *>(this);
+    This->mMap = new DataflowMap(context);
+    return mMap;
+  }
+  HadoopPipes::Reducer* createReducer(HadoopPipes::ReduceContext& context) const 
+  {
+    BOOST_ASSERT(mReduce == NULL);
+    // Pipes made these const; that doesn't work for us so cast away...
+    DataflowTaskFactory * This = const_cast<DataflowTaskFactory *>(this);
+    This->mReduce = new DataflowReduce(context);
+    return mReduce;
+  }
+  HadoopPipes::Partitioner* createPartitioner(HadoopPipes::MapContext& context) const 
+  {
+    // Must create the mapper first so we know if a partitioner
+    // is called for in the plan.  If the mapper doesn't need a
+    // partitioner it returns NULL.
+    BOOST_ASSERT(mMap != NULL);
+    return mMap->createPartitioner();
+  }
+};
+
 static GdbStackTrace st;
 static void onSigsegv(int )
 {
@@ -411,8 +489,8 @@ int main(int argc, char *argv[]) {
 
   ::setenv("LIBHDFS_OPTS", "-Xmx100m", 0);
   try {
-    return HadoopPipes::runTask(HadoopPipes::TemplateFactory<DataflowMap, 
-				DataflowReduce>());
+    DataflowTaskFactory factory;
+    return HadoopPipes::runTask(factory);
   } catch (HadoopUtils::Error & e) {
     std::cerr << e.getMessage().c_str() << std::endl;
     throw e;

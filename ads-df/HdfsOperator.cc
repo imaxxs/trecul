@@ -659,7 +659,7 @@ void hdfs_file_traits::close(hdfs_file_traits::file_type f)
 }
 
 int32_t hdfs_file_traits::read(hdfs_file_traits::file_type f, uint8_t * buf, int32_t bufSize)
-{
+{  
   tSize tmp = hdfsRead(f->FileSystem, f->File, buf, bufSize);
   if (tmp == -1)
     throw std::runtime_error("Failed reading from HDFS file");
@@ -980,14 +980,28 @@ private:
     return *reinterpret_cast<const RuntimeHdfsWriteOperatorType *>(&getOperatorType());
   }
 
+  class OutputFile
+  {
+  public:
+    hdfsFile File;
+    ZLibCompress Compressor;
+    OutputFile(hdfsFile f) 
+      :
+      File(f)
+    {
+    }
+  };
+
   hdfsFS mFileSystem;
-  hdfsFile mFile;
+  std::map<std::string, OutputFile *> mFile;
   RuntimePrinter mPrinter;
-  ZLibCompress mCompressor;
   AsyncWriter<RuntimeHdfsWriteOperator> mWriter;
   boost::thread * mWriterThread;
   HdfsFileCommitter * mCommitter;
   std::string mError;
+  InterpreterContext * mRuntimeContext;
+
+  void createFile(const std::string& filePath);
 
   void renameTempFile();
   /**
@@ -1021,22 +1035,29 @@ RuntimeHdfsWriteOperator::RuntimeHdfsWriteOperator(RuntimeOperator::Services& se
   RuntimeOperator(services, opType),
   mState(START),
   mFileSystem(NULL),
-  mFile(NULL),
   mPrinter(getHdfsWriteType().mPrint),
   mWriter(*this),
   mWriterThread(NULL),
-  mCommitter(NULL)
+  mCommitter(NULL),
+  mRuntimeContext(NULL)
 {
+  if (NULL != getHdfsWriteType().mTransfer) {
+    mRuntimeContext = new InterpreterContext();
+  }
 }
 
 RuntimeHdfsWriteOperator::~RuntimeHdfsWriteOperator()
 {
   delete mWriterThread;
-  if (mFile) {
-    // Abnormal shutdown
-    int ret;
-    hdfs_file_handle::close(mFileSystem, mFile, ret);
-    mFile = NULL;
+  
+  for(std::map<std::string, OutputFile*>::iterator it = mFile.begin(),
+	end = mFile.end(); it != end; ++it) {
+    if (it->second->File) {
+      // Abnormal shutdown
+      int ret;
+      hdfs_file_handle::close(mFileSystem, it->second->File, ret);
+      it->second->File = NULL;
+    }
   }
   if (mCommitter) {
     HdfsFileCommitter::release(mCommitter);
@@ -1050,15 +1071,11 @@ RuntimeHdfsWriteOperator::~RuntimeHdfsWriteOperator()
     // hdfsDisconnect(mFileSystem);
     mFileSystem = NULL;
   }
+  delete mRuntimeContext;
 }
 
-void RuntimeHdfsWriteOperator::start()
+void RuntimeHdfsWriteOperator::createFile(const std::string& filePath)
 {
-  // Connect to the file system
-  mFileSystem = hdfsConnect(getHdfsWriteType().mHdfsHost.c_str(), getHdfsWriteType().mHdfsPort);
-  if (mFileSystem == NULL) {
-    throw std::runtime_error("Couldn't open HDFS filesystem");
-  }
   // TODO: Check if file exists
   // TODO: Make sure file is cleaned up in case of failure.
   // We create a temporary file name and write to that.  When
@@ -1070,37 +1087,60 @@ void RuntimeHdfsWriteOperator::start()
   std::string tmpStr = FileSystem::getTempFileName();
 
   std::stringstream str;
-  str << getHdfsWriteType().mHdfsFile << "/" << tmpStr << "_serial_" << 
+  str << filePath << "/" << tmpStr << "_serial_" << 
     std::setw(5) << std::setfill('0') << getPartition() <<
     ".gz";
   std::string tempFile = str.str();
   std::stringstream permFile;
-  permFile << getHdfsWriteType().mHdfsFile + "/serial_" << 
+  permFile << filePath + "/serial_" << 
     std::setw(5) << std::setfill('0') << getPartition() <<
     ".gz";  
-  mCommitter = HdfsFileCommitter::get();
+  if (mCommitter == NULL) {
+    mCommitter = HdfsFileCommitter::get();
+  }
   mCommitter->track(tempFile, permFile.str(), mFileSystem);
-  mFile = hdfsOpenFile(mFileSystem, 
+  hdfsFile f = hdfsOpenFile(mFileSystem, 
 		       tempFile.c_str(),
   		       O_WRONLY|O_CREAT,
   		       getHdfsWriteType().mBufferSize,
   		       getHdfsWriteType().mReplicationFactor,
   		       /*getHdfsWriteType().mBlockSize*/2000000000);
-  if (mFile == NULL) {
+  if (f == NULL) {
     throw std::runtime_error("Couldn't create HDFS file");
   }
+  OutputFile * of = new OutputFile(f);
   if (hasInlineHeader()) {
     // We write in-file header for every partition
-    mCompressor.put((const uint8_t *) getHdfsWriteType().mHeader.c_str(), 
-		    getHdfsWriteType().mHeader.size(), 
-		    false);
-    while(!mCompressor.run()) {
+    of->Compressor.put((const uint8_t *) getHdfsWriteType().mHeader.c_str(), 
+		       getHdfsWriteType().mHeader.size(), 
+		       false);
+    while(!of->Compressor.run()) {
       uint8_t * output;
       std::size_t outputLen;
-      mCompressor.consumeOutput(output, outputLen);
-      hdfs_file_handle::write(mFileSystem, mFile, output, outputLen);
+      of->Compressor.consumeOutput(output, outputLen);
+      hdfs_file_handle::write(mFileSystem, of->File, output, outputLen);
     }
-  } else if (hasHeaderFile()) {
+  } 
+
+  // Associate file with path.
+  mFile[filePath] = of;
+}
+
+void RuntimeHdfsWriteOperator::start()
+{
+  // Connect to the file system
+  mFileSystem = hdfsConnect(getHdfsWriteType().mHdfsHost.c_str(), getHdfsWriteType().mHdfsPort);
+  if (mFileSystem == NULL) {
+    throw std::runtime_error("Couldn't open HDFS filesystem");
+  }
+
+  // If statically defined path, create and open file here.
+  if (0 != getHdfsWriteType().mHdfsFile.size()) {
+    createFile(getHdfsWriteType().mHdfsFile);
+  }
+
+  if (hasHeaderFile()) {
+    BOOST_ASSERT(getHdfsWriteType().mTransfer == NULL);
     // Extract path from URI
     URI uri(getHdfsWriteType().mHeaderFile.c_str());
     std::string tmpHeaderStr = FileSystem::getTempFileName();
@@ -1120,21 +1160,24 @@ void RuntimeHdfsWriteOperator::start()
 			    (tSize) getHdfsWriteType().mHeader.size());
     hdfs_file_handle::close(mFileSystem, headerFile);
   }
-
   // Start a thread that will write
-  mWriterThread = 
-    new boost::thread(boost::bind(&AsyncWriter<RuntimeHdfsWriteOperator>::run, 
-				  boost::ref(mWriter)));
+  // mWriterThread = 
+  //   new boost::thread(boost::bind(&AsyncWriter<RuntimeHdfsWriteOperator>::run, 
+  // 				  boost::ref(mWriter)));
   mState = START;
   onEvent(NULL);
 }
 
 void RuntimeHdfsWriteOperator::renameTempFile()
 {
-  // Put the file in its final place.
-  if(!mCommitter->commit()) {
-    mError = mCommitter->getError();
-  } 
+  // Put the file(s) in its final place.
+  for(std::map<std::string, OutputFile*>::iterator it = mFile.begin(),
+	end = mFile.end(); it != end; ++it) {    
+    if(!mCommitter->commit()) {
+      mError = mCommitter->getError();
+      break;
+    } 
+  }
 
   if (0 == mError.size() && hasHeaderFile()) {
     // Commit the header file as well.
@@ -1153,35 +1196,55 @@ void RuntimeHdfsWriteOperator::renameTempFile()
 void RuntimeHdfsWriteOperator::writeToHdfs(RecordBuffer input, bool isEOS)
 {
   if (!isEOS) {
+    OutputFile * of = NULL;
+    if (NULL == mRuntimeContext) {
+      of = mFile.begin()->second;
+    } else {
+      RecordBuffer output;
+      getHdfsWriteType().mTransfer->execute(input, output, mRuntimeContext, false);
+      std::string fileName(getHdfsWriteType().mTransferOutput->getVarcharPtr(output)->Ptr);
+      getHdfsWriteType().mTransferFree->free(output);
+      mRuntimeContext->clear();
+      std::map<std::string, OutputFile *>::iterator it = mFile.find(fileName);
+      if (mFile.end() == it) {
+	std::cout << "Creating file: " << fileName.c_str() << std::endl;
+	createFile(fileName);
+	it = mFile.find(fileName);
+      }
+      of = it->second;
+    }
     mPrinter.print(input);
     getHdfsWriteType().mFree.free(input);
-    mCompressor.put((const uint8_t *) mPrinter.c_str(), mPrinter.size(), false);
-    while(!mCompressor.run()) {
+    of->Compressor.put((const uint8_t *) mPrinter.c_str(), mPrinter.size(), false);
+    while(!of->Compressor.run()) {
       uint8_t * output;
       std::size_t outputLen;
-      mCompressor.consumeOutput(output, outputLen);
-      hdfs_file_handle::write(mFileSystem, mFile, output, outputLen);
+      of->Compressor.consumeOutput(output, outputLen);
+      hdfs_file_handle::write(mFileSystem, of->File, output, outputLen);
     }
     mPrinter.clear();
   } else {
-    // Flush data through the compressor.
-    mCompressor.put(NULL, 0, true);
-    while(true) {
-      mCompressor.run();
-      uint8_t * output;
-      std::size_t outputLen;
-      mCompressor.consumeOutput(output, outputLen);
-      if (outputLen > 0) {
-	hdfs_file_handle::write(mFileSystem, mFile, output, outputLen);
-      } else {
-	break;
-      }
-    }    
-    // Flush data to disk
-    hdfs_file_handle::flush(mFileSystem, mFile);
-    // Clean close of file and file system
-    hdfs_file_handle::close(mFileSystem, mFile);
-    mFile = NULL;
+    for(std::map<std::string, OutputFile*>::iterator it = mFile.begin(),
+	  end = mFile.end(); it != end; ++it) {
+      // Flush data through the compressor.
+      it->second->Compressor.put(NULL, 0, true);
+      while(true) {
+	it->second->Compressor.run();
+	uint8_t * output;
+	std::size_t outputLen;
+	it->second->Compressor.consumeOutput(output, outputLen);
+	if (outputLen > 0) {
+	  hdfs_file_handle::write(mFileSystem, it->second->File, output, outputLen);
+	} else {
+	  break;
+	}
+      }    
+      // Flush data to disk
+      hdfs_file_handle::flush(mFileSystem, it->second->File);
+      // Clean close of file and file system
+      hdfs_file_handle::close(mFileSystem, it->second->File);
+      it->second->File = NULL;
+    }
   }
 }
 
@@ -1198,19 +1261,19 @@ void RuntimeHdfsWriteOperator::onEvent(RuntimePort * port)
 	RecordBuffer input;
 	read(port, input);
 	bool isEOS = RecordBuffer::isEOS(input);
-	//writeToHdfs(input, isEOS);
-	mWriter.enqueue(input);
+	writeToHdfs(input, isEOS);
+	// mWriter.enqueue(input);
 	if (isEOS) {
 	  // Wait for writers to flush; perhaps this should be done is shutdown
-	  mWriterThread->join();
+	  // mWriterThread->join();
 	  // See if there was an error within the writer that we need
 	  // to throw out.  Errors here are thow that would have happened
 	  // after we enqueued EOS.
-	  std::string err;
-	  mWriter.getError(err);
-	  if (err.size()) {
-	    throw std::runtime_error(err);
-	  }
+	  // std::string err;
+	  // mWriter.getError(err);
+	  // if (err.size()) {
+	  //   throw std::runtime_error(err);
+	  // }
 	  // Do the rename of the temp file in the main dataflow
 	  // thread because this makes the order in which files are renamed
 	  // across the entire dataflow deterministic (at least for the map-reduce
@@ -1226,10 +1289,13 @@ void RuntimeHdfsWriteOperator::onEvent(RuntimePort * port)
 
 void RuntimeHdfsWriteOperator::shutdown()
 {
-  if (mFile) {
-    int ret;
-    hdfs_file_handle::close(mFileSystem, mFile, ret);
-    mFile = NULL;
+  for(std::map<std::string, OutputFile*>::iterator it = mFile.begin(),
+	end = mFile.end(); it != end; ++it) {
+    if (it->second->File) {
+      int ret;
+      hdfs_file_handle::close(mFileSystem, it->second->File, ret);
+      it->second->File = NULL;
+    }
   }
   if (mFileSystem) {
     // Since we are not calling hdfsConnectNewInstance
@@ -1244,28 +1310,69 @@ void RuntimeHdfsWriteOperator::shutdown()
   }
 }
 
+RuntimeHdfsWriteOperatorType::RuntimeHdfsWriteOperatorType(const std::string& opName,
+							   const RecordType * ty, 
+							   const std::string& hdfsHost, 
+							   int32_t port, 
+							   const std::string& hdfsFile,
+							   const std::string& header,
+							   const std::string& headerFile,
+							   const RecordTypeTransfer * argTransfer,
+							   int32_t bufferSize, 
+							   int32_t replicationFactor, 
+							   int32_t blockSize)
+  :
+  RuntimeOperatorType(opName.c_str()),
+  mPrint(ty->getPrint()),
+  mFree(ty->getFree()),
+  mHdfsHost(hdfsHost),
+  mHdfsPort(port),
+  mHdfsFile(hdfsFile),
+  mBufferSize(bufferSize),
+  mReplicationFactor(replicationFactor),
+  mBlockSize(blockSize),
+  mHeader(header),
+  mHeaderFile(headerFile),
+  mTransfer(argTransfer ? argTransfer->create() : NULL),
+  mTransferFree(argTransfer ? new RecordTypeFree(argTransfer->getTarget()->getFree()) : NULL),
+  mTransferOutput(argTransfer ? new FieldAddress(*argTransfer->getTarget()->begin_offsets()) : NULL)
+{
+}
+
+RuntimeHdfsWriteOperatorType::~RuntimeHdfsWriteOperatorType()
+{
+  delete mTransfer;
+  delete mTransferFree;
+  delete mTransferOutput;
+}
+
 RuntimeOperator * RuntimeHdfsWriteOperatorType::create(RuntimeOperator::Services& services) const
 {
   return new RuntimeHdfsWriteOperator(services, *this);
 }
 
 LogicalEmit::LogicalEmit()
+  :
+  mPartitioner(NULL)
 {
 }
 
 LogicalEmit::~LogicalEmit()
 {
+  delete mPartitioner;
 }
 
 void LogicalEmit::check(PlanCheckContext& log)
 {
   // Validate the parameters
-  std::string predicate;
+  std::string partitioner;
   for(const_param_iterator it = begin_params();
       it != end_params();
       ++it) {
-    if (boost::algorithm::iequals(it->Name, "key")) {
-      mKey = boost::get<std::string>(it->Value);
+    if (it->equals("key")) {
+      mKey = getStringValue(log, *it);
+    } else if (it->equals("partition")) {
+      partitioner = getStringValue(log, *it);
     } else {
       checkDefaultParam(*it);
     }
@@ -1274,6 +1381,20 @@ void LogicalEmit::check(PlanCheckContext& log)
   if (!getInput(0)->getRecordType()->hasMember(mKey)) {
     log.logError(*this, std::string("Missing field: ") + mKey);
   }
+
+  // if partitioner set, validate/compile
+  if (partitioner.size()) {
+    std::vector<RecordMember> emptyMembers;
+    RecordType emptyTy(emptyMembers);
+    std::vector<const RecordType *> tableOnly;
+    tableOnly.push_back(getInput(0)->getRecordType());
+    tableOnly.push_back(&emptyTy);
+    mPartitioner = new RecordTypeFunction(log, 
+					  "partitioner",
+					  tableOnly, 
+					  partitioner);
+    std::cout << "Setting partitioner " << partitioner.c_str() << std::endl;
+  }
 }
 
 void LogicalEmit::create(class RuntimePlanBuilder& plan)
@@ -1281,7 +1402,7 @@ void LogicalEmit::create(class RuntimePlanBuilder& plan)
   RuntimeOperatorType * opType = 
     new RuntimeHadoopEmitOperatorType("RuntimeHadoopEmitOperatorType",
 				      getInput(0)->getRecordType(),
-				      mKey);
+				      mKey, mPartitioner);
   
   plan.addOperatorType(opType);
   plan.mapInputPort(this, 0, opType, 0);  
@@ -1293,8 +1414,14 @@ RuntimeHadoopEmitOperator::RuntimeHadoopEmitOperator(RuntimeOperator::Services& 
   mState(START),
   mContext(NULL),
   mKeyPrinter(getHadoopEmitType().mKey),
-  mValuePrinter(getHadoopEmitType().mPrint)
+  mValuePrinter(getHadoopEmitType().mPrint),
+  mRuntimeContext(new InterpreterContext())
 {
+}
+
+RuntimeHadoopEmitOperator::~RuntimeHadoopEmitOperator()
+{
+  delete mRuntimeContext;
 }
 
 void RuntimeHadoopEmitOperator::start()
@@ -1312,10 +1439,10 @@ void RuntimeHadoopEmitOperator::writeToHdfs(RecordBuffer input, bool isEOS)
   if (!isEOS) {
     mValuePrinter.print(input, false);
     mKeyPrinter.print(input, false);
-    getHadoopEmitType().mFree.free(input);
     mContext->emit(mKeyPrinter.str(), mValuePrinter.str());
     mKeyPrinter.clear();
     mValuePrinter.clear();
+    getHadoopEmitType().mFree.free(input);
   } 
 }
 
@@ -1329,10 +1456,9 @@ void RuntimeHadoopEmitOperator::onEvent(RuntimePort * port)
       return;
     case READ:
       {
-	RecordBuffer input;
-	read(port, input);
-	bool isEOS = RecordBuffer::isEOS(input);
-	writeToHdfs(input, isEOS);
+	read(port, mInput);
+	bool isEOS = RecordBuffer::isEOS(mInput);
+	writeToHdfs(mInput, isEOS);
 	if (isEOS) {
 	  break;
 	}
@@ -1343,6 +1469,27 @@ void RuntimeHadoopEmitOperator::onEvent(RuntimePort * port)
 
 void RuntimeHadoopEmitOperator::shutdown()
 {
+}
+
+bool RuntimeHadoopEmitOperator::hasPartitioner()
+{
+  return getHadoopEmitType().mPartitioner != NULL;
+}
+
+uint32_t RuntimeHadoopEmitOperator::partition(const std::string& key, 
+					     uint32_t numPartitions)
+{
+  // Based on code inspection we should be called as a callback
+  // from within the emit.  Therefore we can ignore the key
+  // and just calculate the partition from the input record.  This saves
+  // us from having to reparse the key.
+  return (uint32_t)getHadoopEmitType().mPartitioner->execute(mInput, RecordBuffer(),
+							     mRuntimeContext) % numPartitions;
+}
+
+RuntimeHadoopEmitOperatorType::~RuntimeHadoopEmitOperatorType()
+{
+  delete mPartitioner;
 }
 
 RuntimeOperator * RuntimeHadoopEmitOperatorType::create(RuntimeOperator::Services& services) const

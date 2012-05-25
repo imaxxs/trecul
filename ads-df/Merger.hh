@@ -709,10 +709,12 @@ RuntimeOperator * InternalFileParserOperatorType<_InputBuffer>::create(RuntimeOp
 class LogicalFileWrite : public LogicalOperator
 {
 private:
+  std::string mConnect;
   std::string mFile;
   std::string mMode;
   std::string mHeader;
   std::string mHeaderFile;
+  RecordTypeTransfer * mFileNameExpr;
 
   void buildHeader(bool isFormatHeader);
   void checkPath(PlanCheckContext& ctxt, const std::string& path);

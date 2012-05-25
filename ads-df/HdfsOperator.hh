@@ -35,7 +35,11 @@
 #ifndef __HDFSOPERATOR_H
 #define __HDFSOPERATOR_H
 
+#include <set>
+#include <string>
+#include <vector>
 #include <boost/shared_ptr.hpp>
+#include <boost/serialization/set.hpp>
 #include "FileSystem.hh"
 #include "RuntimeOperator.hh"
 #include "FileWriteOperator.hh"
@@ -137,6 +141,12 @@ private:
   int32_t mBlockSize;
   std::string mHeader;
   std::string mHeaderFile;
+  // Transfer to calculate any expressions in the
+  // file string.
+  IQLTransferModule * mTransfer;
+  RecordTypeFree * mTransferFree;
+  FieldAddress * mTransferOutput;
+  
   // Serialization
   friend class boost::serialization::access;
   template <class Archive>
@@ -153,8 +163,15 @@ private:
     ar & BOOST_SERIALIZATION_NVP(mBlockSize);
     ar & BOOST_SERIALIZATION_NVP(mHeader);
     ar & BOOST_SERIALIZATION_NVP(mHeaderFile);
+    ar & BOOST_SERIALIZATION_NVP(mTransfer);
+    ar & BOOST_SERIALIZATION_NVP(mTransferFree);
+    ar & BOOST_SERIALIZATION_NVP(mTransferOutput);
   }
   RuntimeHdfsWriteOperatorType()
+    :
+    mTransfer(NULL),
+    mTransferFree(NULL),
+    mTransferOutput(NULL)
   {
   }
 public:
@@ -165,23 +182,11 @@ public:
 			       const std::string& hdfsFile,
 			       const std::string& header,
 			       const std::string& headerFile,
+			       const RecordTypeTransfer * argTransfer,
 			       int32_t bufferSize=0, 
 			       int32_t replicationFactor=0, 
-			       int32_t blockSize=0)
-    :
-    RuntimeOperatorType(opName.c_str()),
-    mPrint(ty->getPrint()),
-    mFree(ty->getFree()),
-    mHdfsHost(hdfsHost),
-    mHdfsPort(port),
-    mHdfsFile(hdfsFile),
-    mBufferSize(bufferSize),
-    mReplicationFactor(replicationFactor),
-    mBlockSize(blockSize),
-    mHeader(header),
-    mHeaderFile(headerFile)
-  {
-  }
+			       int32_t blockSize=0);
+  ~RuntimeHdfsWriteOperatorType();
   RuntimeOperator * create(RuntimeOperator::Services& services) const;
 };
 
@@ -189,6 +194,8 @@ class LogicalEmit : public LogicalOperator
 {
 private:
   std::string mKey;
+  // Optional partition function
+  class RecordTypeFunction * mPartitioner;
 public:
   LogicalEmit();
   ~LogicalEmit();
@@ -211,6 +218,7 @@ private:
   RecordTypePrint mPrint;
   RecordTypeFree mFree;
   RecordTypePrint mKey;
+  IQLFunctionModule * mPartitioner;
   // Serialization
   friend class boost::serialization::access;
   template <class Archive>
@@ -219,23 +227,29 @@ private:
     ar & BOOST_SERIALIZATION_BASE_OBJECT_NVP(RuntimeOperatorType);
     ar & BOOST_SERIALIZATION_NVP(mPrint);
     ar & BOOST_SERIALIZATION_NVP(mFree);
-    ar & BOOST_SERIALIZATION_NVP(mKey);
+    ar & BOOST_SERIALIZATION_NVP(mKey);    
+    ar & BOOST_SERIALIZATION_NVP(mPartitioner);
   }
   RuntimeHadoopEmitOperatorType()
+    :
+    mPartitioner(NULL)
   {
   }
 public:
   RuntimeHadoopEmitOperatorType(const std::string& opName,
 				const RecordType * ty, 
-				const std::string& keyField)
+				const std::string& keyField,
+				const RecordTypeFunction * partitioner)
     :
     RuntimeOperatorType(opName.c_str()),
     mPrint(ty->getPrint()),
     mFree(ty->getFree()),
     mKey(TaggedFieldAddress(ty->getFieldAddress(keyField),
-			    ty->getMember(keyField).GetType()->GetEnum()))
+			    ty->getMember(keyField).GetType()->GetEnum())),
+    mPartitioner(partitioner != NULL ? partitioner->create() : NULL)
   {
   }
+  ~RuntimeHadoopEmitOperatorType();
   RuntimeOperator * create(RuntimeOperator::Services& services) const;
 };
 
@@ -247,15 +261,18 @@ public:
 private:
   enum State { START, READ };
   State mState;
-  const RuntimeHadoopEmitOperatorType &  getHadoopEmitType()
+  RecordBuffer mInput;
+  const RuntimeHadoopEmitOperatorType &  getHadoopEmitType() 
   {
     return *reinterpret_cast<const RuntimeHadoopEmitOperatorType *>(&getOperatorType());
   }
   HadoopPipes::TaskContext * mContext;
   RuntimePrinter mKeyPrinter;
   RuntimePrinter mValuePrinter;
+  class InterpreterContext * mRuntimeContext;
 public:
   RuntimeHadoopEmitOperator(RuntimeOperator::Services& services, const RuntimeOperatorType& opType);
+  ~RuntimeHadoopEmitOperator();
   void start();
   void onEvent(RuntimePort * port);
   void shutdown();
@@ -268,6 +285,12 @@ public:
   {
     mContext = ctxt;
   }
+
+  /**
+   * Give Hadoop Pipes access to our partitioner.
+   */
+  bool hasPartitioner();
+  uint32_t partition(const std::string& key, uint32_t numReduces);
 };
 
 #endif
