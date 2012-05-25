@@ -1949,6 +1949,18 @@ BOOST_AUTO_TEST_CASE(testIQLRecordUpdate)
     BOOST_CHECK_EQUAL(1239923433, rhsTy.getInt32("h", rhs1));
     BOOST_CHECK_EQUAL(0.04, rhsTy.getDouble("z", rhs1));
   }
+
+  // Negative cases covering expected parse failures
+  {
+    try {
+      RecordTypeInPlaceUpdate up(ctxt, 
+				 "xfer5up", 
+				 types, 
+				 "SET g = c, SET g = c");
+      BOOST_CHECK(false);
+    } catch(std::exception& ) {
+    }
+  }
 }
 
 BOOST_AUTO_TEST_CASE(testRecordTypeSerialize)
@@ -2604,6 +2616,87 @@ BOOST_AUTO_TEST_CASE(testIQLRecordTransferLocalVariable)
   BOOST_CHECK_EQUAL(2300, t1.getTarget()->getInt32("c", outputBuf));
   BOOST_CHECK_EQUAL(230, t1.getTarget()->getInt32("d", outputBuf));
   BOOST_CHECK_EQUAL(2553, t1.getTarget()->getInt32("e", outputBuf));
+}
+
+BOOST_AUTO_TEST_CASE(testIQLTransferParseErrors)
+{
+  DynamicRecordContext ctxt;
+  std::vector<RecordMember> members;
+  members.push_back(RecordMember("a", Int32Type::Get(ctxt)));
+  members.push_back(RecordMember("b", Int32Type::Get(ctxt)));
+  members.push_back(RecordMember("c", Int32Type::Get(ctxt)));
+  boost::shared_ptr<RecordType> recordType(new RecordType(members));
+  
+  // Make sure we catch an invalid separator
+  try {
+    RecordTypeTransfer t1(ctxt, "xfer1", recordType.get(), 
+			  "a AS d; b AS e");
+    BOOST_CHECK(false);
+  } catch(std::exception& ) {
+  }
+  // Make sure we don't allow statements
+  try {
+    RecordTypeTransfer t1(ctxt, "xfer1", recordType.get(), 
+			  "a AS d, SET b = b");
+    BOOST_CHECK(false);
+  } catch(std::exception& ) {
+  }
+}
+
+BOOST_AUTO_TEST_CASE(testIQLFunctionParseErrors)
+{
+  DynamicRecordContext ctxt;
+  std::vector<RecordMember> members;
+  members.push_back(RecordMember("a", CharType::Get(ctxt, 6)));
+  members.push_back(RecordMember("b", VarcharType::Get(ctxt)));
+  members.push_back(RecordMember("c", Int32Type::Get(ctxt)));
+  members.push_back(RecordMember("d", Int32Type::Get(ctxt)));
+  members.push_back(RecordMember("e", DoubleType::Get(ctxt)));
+  RecordType recTy(members);
+  std::vector<RecordMember> emptyMembers;
+  RecordType emptyTy(emptyMembers);
+  std::vector<const RecordType *> types;
+  types.push_back(&recTy);
+  types.push_back(&emptyTy);
+
+  // Make sure we don't allow AS
+  try {
+    RecordTypeFunction f(ctxt, "parsecheck", types, "c AS f");
+    BOOST_CHECK(false);
+  } catch(std::exception& ) {
+  }
+  // Make sure we don't allow multiple expressions
+  try {
+    RecordTypeFunction f(ctxt, "parsecheck", types, "c,d");
+    BOOST_CHECK(false);
+  } catch(std::exception& ) {
+  }
+  try {
+    RecordTypeFunction f(ctxt, "parsecheck", types, "c; d");
+    BOOST_CHECK(false);
+  } catch(std::exception& ) {
+  }
+  // Make sure we don't allow statements
+  try {
+    RecordTypeFunction f(ctxt, "parsecheck", types, "SET c = d");
+    BOOST_CHECK(false);
+  } catch(std::exception& ) {
+  }
+  try {
+    RecordTypeFunction f(ctxt, "parsecheck", types, "c,SET c = d");
+    BOOST_CHECK(false);
+  } catch(std::exception& ) {
+  }
+  try {
+    RecordTypeFunction f(ctxt, "parsecheck", types, "SET c = d, c");
+    BOOST_CHECK(false);
+  } catch(std::exception& ) {
+  }
+  try {
+    RecordTypeFunction f(ctxt, "parsecheck", types, "SET c = d; c");
+    BOOST_CHECK(false);
+  } catch(std::exception& ) {
+  }
 }
 
 BOOST_AUTO_TEST_CASE(testIQLCaseStatement)

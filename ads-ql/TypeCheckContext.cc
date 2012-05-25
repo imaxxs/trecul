@@ -362,6 +362,22 @@ void TypeCheckContext::loadBuiltinFunctions()
 		    wrap(FunctionType::Get(drc, 
 					   CharType::Get(drc, 22),
 					   Int32Type::Get(drc))));
+  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
+		    "akid64_get_creation_time",
+		    wrap(FunctionType::Get(drc, 
+					   CharType::Get(drc, 22),
+					   DatetimeType::Get(drc))));
+  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
+		    "akid64_decrypt",
+		    wrap(FunctionType::Get(drc, 
+					   VarcharType::Get(drc),
+					   CharType::Get(drc, 22))));
+  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
+		    "akid64_encrypt",
+		    wrap(FunctionType::Get(drc, 
+					   CharType::Get(drc, 22),
+					   Int32Type::Get(drc),
+					   VarcharType::Get(drc))));
 }
 
 void TypeCheckContext::buildSetValue(const FieldType * lhs,
@@ -626,9 +642,10 @@ void TypeCheckContext::beginRecord()
 
 void TypeCheckContext::addField(const char * name, const FieldType * ty)
 {
-  if (name == NULL)
-    std::runtime_error("Must specify an alias for expression");
-  
+  if (name == NULL) {
+    throw std::runtime_error("Must specify an field name for expression");
+  }
+
   if (isBuiltinFunction(name)) {
     throw std::runtime_error((boost::format("Cannot use name of built in "
 					    "function '%1%' as variable name")

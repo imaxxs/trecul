@@ -80,7 +80,7 @@ edge
 
 singleExpression
     :
-    (declareStatement ','!)* returnExpression
+    (declareStatement ','!)* returnExpression EOF
     ;
 
 declareStatement
@@ -95,7 +95,7 @@ returnExpression
 
 recordConstructor
     :
-    fieldConstructor (','! fieldConstructor)*
+    fieldConstructor (','! fieldConstructor)* EOF
     ;
 
 fieldConstructor
@@ -119,37 +119,14 @@ fieldFormat
     ID^ builtInType
     ;
 
-program
-  :
-  TK_CREATE^ TK_PROCEDURE! ID! programArgList TK_AS! statementList
-  | 
-  TK_CREATE^ TK_FUNCTION! ID! '('! programArgList ')'! returnsDecl TK_AS! statementList
-  ;
-
-returnsDecl
-        :
-        TK_RETURNS^ builtInType
-        ;
-
-programArgList
-	:
-	(programArgDecl (','!)?)*
-	
-	;
-
 localVarOrId
     :
     ID
     ;
 
-programArgDecl
-    :
-	localVarOrId builtInType TK_OUTPUT? -> ^(TK_DECLARE["DECLARE"] localVarOrId builtInType TK_OUTPUT?) 
-	;
-
 statementList
 	:
-	(statement)* -> ^(TK_BEGIN["BEGIN"] statement*)
+	(statement)* EOF -> ^(TK_BEGIN["BEGIN"] statement*) 
 	;
 
 statement

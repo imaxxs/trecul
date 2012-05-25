@@ -110,7 +110,7 @@ fieldConstructor[IQLTypeCheckContextRef ctxt]
     :
     ^(ID '*') { IQLTypeCheckAddFields($ctxt, (const char *) $ID.text->chars); }
     |
-    ^(TK_SET e = expression[$ctxt] (ID {nm = (const char *) $ID.text->chars; })?  { IQLTypeCheckAddField($ctxt, nm != NULL ? nm : (const char *) e.name->chars, e.ty); } )
+    ^(TK_SET e = expression[$ctxt] (ID {nm = (const char *) $ID.text->chars; })?  { IQLTypeCheckAddField($ctxt, nm != NULL ? nm : e.name ? (const char *) e.name->chars : NULL, e.ty); } )
     |
     declareStatement[$ctxt]
     |
@@ -219,6 +219,8 @@ expression[IQLTypeCheckContextRef ctxt] returns [pANTLR3_STRING name, IQLFieldTy
 @init {
 int isBinary=0;
 IQLFieldTypeVectorRef types=NULL;
+$name = NULL;
+$ty = NULL;
 }
 	: 
     ^(TK_OR e1 = expression[$ctxt] e2 = expression[$ctxt] { $ty = IQLTypeCheckAnd($ctxt, e1.ty, e2.ty); $TK_OR->u = $ty; })
