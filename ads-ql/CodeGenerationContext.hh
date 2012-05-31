@@ -257,7 +257,7 @@ public:
 class CodeGenerationFunctionContext {
 public:
   LLVMBuilderRef Builder;
-  class SymbolTable * mSymbolTable;
+  class TreculSymbolTable * mSymbolTable;
   LLVMValueRef Function;
   IQLToLLVMRecordMapRef RecordArguments;
   IQLRecordTypeRef OutputRecord;
@@ -281,7 +281,7 @@ public:
   
 private:
   bool mOwnsModule;
-  class SymbolTable * mSymbolTable;
+  class TreculSymbolTable * mSymbolTable;
 public:
   LLVMContextRef LLVMContext;
   LLVMModuleRef LLVMModule;
@@ -352,19 +352,24 @@ public:
    * Define a field of a record
    */
   void defineFieldVariable(llvm::Value * basePointer,
+			   const char * prefix,
 			   const char * memberName,
-			   const char * prefixedMemberName,
 			   const RecordType * recordType);
 
   /**
    * Lookup an l-value in the symbol table.
    */
-  const IQLToLLVMLValue * lookup(const char * name);
+  const IQLToLLVMLValue * lookup(const char * name, const char * name2);
 
   /**
    * Lookup an r-value in the symbol table.
    */
-  const IQLToLLVMValue * lookupValue(const char * name);
+  const IQLToLLVMValue * lookupValue(const char * name, const char * name2);
+
+  /**
+   * Lookup an r-value in the symbol table.
+   */
+  const IQLToLLVMValue * lookupBasePointer(const char * name);
 
   /**
    * Lookup an r-value in the symbol table.
@@ -415,13 +420,11 @@ public:
    */
   void addInputRecordType(const char * name, 
 			  const char * argumentName, 
-			  const RecordType * rec,
-			  const char * prefix="");
+			  const RecordType * rec);
   void addInputRecordType(const char * name, 
 			  const char * argumentName, 
 			  const RecordType * rec,
-			  const boost::dynamic_bitset<>& mask,
-			  const char * prefix);
+			  const boost::dynamic_bitset<>& mask);
 
   /**
    * Build a while loop.

@@ -235,7 +235,7 @@ expression[IQLTreeFactoryRef ctxt] returns [IQLExpressionRef e]
 	| WSTRING_LITERAL
 	| t=TK_TRUE { $e = IQLBuildBoolean($ctxt, 1, $t->getLine($t), $t->getCharPositionInLine($t)); }
 	| t=TK_FALSE { $e = IQLBuildBoolean($ctxt, 0, $t->getLine($t), $t->getCharPositionInLine($t)); }
-	| ^(t=ID ID?) { $e = IQLBuildVariable($ctxt, (const char *)$t.text->chars, $t->getLine($t), $t->getCharPositionInLine($t)); } 
+	| ^(t=ID (fun=ID { isBinary=1; } )?) { $e = IQLBuildVariable($ctxt, (const char *)$t.text->chars, isBinary ? (const char *)$fun.text->chars : 0, $t->getLine($t), $t->getCharPositionInLine($t)); } 
 	| ^(t='[' fun=ID e1=expression[$ctxt] { $e = IQLBuildArrayRef($ctxt, (const char *)$fun.text->chars, e1, $t->getLine($t), $t->getCharPositionInLine($t)); })
     | t=TK_NULL { $e = IQLBuildNil($ctxt, $t->getLine($t), $t->getCharPositionInLine($t)); }
     | ^(t=TK_SUM e1=expression[$ctxt] { $e = IQLBuildUnaryFun($ctxt, "SUM", e1, $t->getLine($t), $t->getCharPositionInLine($t)); } )

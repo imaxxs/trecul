@@ -83,30 +83,23 @@ RecordTypeFunction * EqualsFunction::get(DynamicRecordContext & ctxt,
 					 const std::string& name,
 					 bool areNullsEqual)
 {
-  // This is kinda hacky.  When we compare two records to each other,
-  // we need to refer to one field from each record.  Since we do this
-  // by name, we generate a temporary prefix to disambiguate.
   std::vector<const RecordType *> eqTypes;
   eqTypes.push_back(lhs);
   eqTypes.push_back(rhs);
-  std::vector<std::string> eqPrefixes;
-  eqPrefixes.push_back("r_");
-  eqPrefixes.push_back("l_");
   std::string eqPred;
   for(std::size_t i=0; i<fields.size(); i++) {
     bool isFieldNullable = lhs->getMember(fields[i]).GetType()->isNullable() ||
       rhs->getMember(fields[i]).GetType()->isNullable();
     if (eqPred.size() > 0) eqPred += " AND ";
     if (areNullsEqual && isFieldNullable) {
-      eqPred += (boost::format("((l_%1% IS NULL AND r_%1% IS NULL) OR l_%1% = r_%1%)") % fields[i]).str();
+      eqPred += (boost::format("((input1.%1% IS NULL AND input0.%1% IS NULL) OR input1.%1% = input0.%1%)") % fields[i]).str();
     } else {
-      eqPred += (boost::format("l_%1% = r_%1%") % fields[i]).str();
+      eqPred += (boost::format("input1.%1% = input0.%1%") % fields[i]).str();
     }
   }
   return new RecordTypeFunction(ctxt, name, 
 				eqTypes, 
-				eqPred, 
-				&eqPrefixes);
+				eqPred);
 }
 
 RecordTypeFunction * EqualsFunction::get(DynamicRecordContext & ctxt,
@@ -174,19 +167,16 @@ RecordTypeFunction * LessThanFunction::get(DynamicRecordContext & ctxt,
   std::vector<const RecordType *> eqTypes;
   eqTypes.push_back(lhs);
   eqTypes.push_back(rhs);
-  std::vector<std::string> eqPrefixes;
-  eqPrefixes.push_back("l_");
-  eqPrefixes.push_back("r_");
   std::string eqPred;
   for(std::size_t i=0; i<fields.size(); i++) {
     if (i > 0) { 
       if (sortNulls && (lhs->getMember(fields[i-1].getName()).GetType()->isNullable() ||
 			rhs->getMember(fields[i-1].getName()).GetType()->isNullable())) {
-	eqPred += (boost::format(" OR (((l_%1% IS NULL AND r_%1% IS NULL) OR "
-				 "l_%1% = r_%1%) AND (") % 
+	eqPred += (boost::format(" OR (((input0.%1% IS NULL AND input1.%1% IS NULL) OR "
+				 "input0.%1% = input1.%1%) AND (") % 
 		   fields[i-1].getName()).str();
       } else {
-	eqPred += (boost::format(" OR (l_%1% = r_%1% AND (") % 
+	eqPred += (boost::format(" OR (input0.%1% = input1.%1% AND (") % 
 		   fields[i-1].getName()).str();
       }
     } 
@@ -197,11 +187,11 @@ RecordTypeFunction * LessThanFunction::get(DynamicRecordContext & ctxt,
       bool isLeftNullLess = 
 	(fields[i].getOrder()==SortKey::ASC && QueryOptions::nullsSortLow()) ||
 	(fields[i].getOrder()==SortKey::DESC && !QueryOptions::nullsSortLow());
-      eqPred += (boost::format("(%2%_%1% IS NULL AND %3%_%1% IS NOT NULL OR ") %
+      eqPred += (boost::format("(%2%.%1% IS NULL AND %3%.%1% IS NOT NULL OR ") %
 		 fields[i].getName() %
-		 (isLeftNullLess ? "l" : "r") % (isLeftNullLess ? "r" : "l")).str();
+		 (isLeftNullLess ? "input0" : "input1") % (isLeftNullLess ? "input1" : "input0")).str();
     }
-    eqPred += (boost::format("l_%1% %2% r_%1%") % fields[i].getName() %
+    eqPred += (boost::format("input0.%1% %2% input1.%1%") % fields[i].getName() %
 	       (fields[i].getOrder()==SortKey::ASC ? "<" : ">")).str();
     if (handleNulls) {
       eqPred += ")";
@@ -212,8 +202,7 @@ RecordTypeFunction * LessThanFunction::get(DynamicRecordContext & ctxt,
   }
   return new RecordTypeFunction(ctxt, name, 
 				eqTypes, 
-				eqPred, 
-				&eqPrefixes);
+				eqPred);
 }
 
 RecordTypeFunction * 
@@ -1978,9 +1967,9 @@ void HashJoin::init(DynamicRecordContext & ctxt,
   std::vector<const RecordType *> probeOnly;
   probeOnly.push_back(mProbeInput);
   probeOnly.push_back(&emptyTy);
-  std::vector<const RecordType *> tableAndProbe;
-  tableAndProbe.push_back(mTableInput);
-  tableAndProbe.push_back(mProbeInput);
+  std::vector<AliasedRecordType> tableAndProbe;
+  tableAndProbe.push_back(AliasedRecordType("table", mTableInput));
+  tableAndProbe.push_back(AliasedRecordType("probe", mProbeInput));
   // Handle case of a cross join
   if (tableKeys.size()) {
     if(tableKeys.size() != probeKeys.size()) {
@@ -2013,7 +2002,8 @@ void HashJoin::init(DynamicRecordContext & ctxt,
       } else {
 	probeKey += probeKeys[i];
       }
-      eq += (boost::format("%1% = %2%") % tableKeys[i] % probeKeys[i]).str();
+      eq += (boost::format("table.%1% = probe.%2%") % tableKeys[i] % 
+	     probeKeys[i]).str();
     }
     mTableHash = new RecordTypeFunction(ctxt, "tableHash", tableOnly, (boost::format("#(%1%)") % tableKey).str());
     mProbeHash = new RecordTypeFunction(ctxt, "probeHash", probeOnly, (boost::format("#(%1%)") % probeKey).str());
@@ -2882,22 +2872,15 @@ RecordTypeFunction * SortMergeJoin::createCompareFunction(DynamicRecordContext& 
   std::vector<const RecordType *> eqTypes;
   eqTypes.push_back(leftInputType);
   eqTypes.push_back(rightInputType);
-  // This is kinda hacky.  When we compare two records to each other,
-  // we need to refer to one field from each record.  Since we do this
-  // by name, we generate a temporary prefix.
-  std::vector<std::string> eqPrefixes;
-  eqPrefixes.push_back("l_");
-  eqPrefixes.push_back("r_");
   std::string eqPred;
   for(std::size_t i=0; i<leftFields.size(); i++) {
     if (eqPred.size() > 0) eqPred += " AND ";
-    eqPred += (boost::format("l_%1% %3% r_%2%") % leftFields[i] % rightFields[i] % op).str();
+    eqPred += (boost::format("input0.%1% %3% input1.%2%") % leftFields[i] % rightFields[i] % op).str();
   }
 
   return new RecordTypeFunction(ctxt, "xfer5eq", 
 				eqTypes, 
-				eqPred, 
-				&eqPrefixes);
+				eqPred);
 }
 
 RecordTypeFunction * SortMergeJoin::createMemcmpFunction(DynamicRecordContext& ctxt,
@@ -2912,19 +2895,16 @@ RecordTypeFunction * SortMergeJoin::createMemcmpFunction(DynamicRecordContext& c
   // This is kinda hacky.  When we compare two records to each other,
   // we need to refer to one field from each record.  Since we do this
   // by name, we generate a temporary prefix.
-  std::vector<std::string> eqPrefixes;
-  eqPrefixes.push_back("l_");
-  eqPrefixes.push_back("r_");
   std::string eqPred;
   for(std::size_t i=0; i<leftFields.size(); i++) {
     const RecordMember& leftMember(leftInputType->getMember(leftFields[i]));
     const RecordMember& rightMember(rightInputType->getMember(rightFields[i]));
     std::string leftNullability = leftMember.GetType()->isNullable() ?
-      (boost::format("l_%1% IS NULL OR ") % leftFields[i]).str() : "";
+      (boost::format("input0.%1% IS NULL OR ") % leftFields[i]).str() : "";
     std::string rightNullability = rightMember.GetType()->isNullable() ?
-      (boost::format("r_%1% IS NULL OR ") % rightFields[i]).str() : "";
-    eqPred += (boost::format("CASE WHEN %3%l_%1% < r_%2% THEN -1 ELSE "
-			     "CASE WHEN %4%l_%1% > r_%2% THEN 1 ELSE ") % 
+      (boost::format("input1.%1% IS NULL OR ") % rightFields[i]).str() : "";
+    eqPred += (boost::format("CASE WHEN %3%input0.%1% < input1.%2% THEN -1 ELSE "
+			     "CASE WHEN %4%input0.%1% > input1.%2% THEN 1 ELSE ") % 
 	       leftFields[i] % rightFields[i] % 
 	       (QueryOptions::nullsSortLow() ? leftNullability : rightNullability) % 
 	       (QueryOptions::nullsSortLow() ? rightNullability : leftNullability)).str();
@@ -2937,8 +2917,7 @@ RecordTypeFunction * SortMergeJoin::createMemcmpFunction(DynamicRecordContext& c
 
   return new RecordTypeFunction(ctxt, "xfer5eq", 
 				eqTypes, 
-				eqPred, 
-				&eqPrefixes);
+				eqPred);
 }
 
 RecordTypeTransfer * 
@@ -3042,9 +3021,9 @@ void SortMergeJoin::init(DynamicRecordContext & ctxt,
 					      rightKeys, mRightInput);
   // Create the residual predicate
   if (residual.size()) {
-    std::vector<const RecordType *> residualTypes;
-    residualTypes.push_back(mLeftInput);
-    residualTypes.push_back(mRightInput);
+    std::vector<AliasedRecordType> residualTypes;
+    residualTypes.push_back(AliasedRecordType("l", mLeftInput));
+    residualTypes.push_back(AliasedRecordType("r", mRightInput));
     mResidual = new RecordTypeFunction(ctxt, "eqpred", residualTypes, residual);
   }
 

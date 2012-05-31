@@ -1363,8 +1363,7 @@ void LLVMBase::createTransferFunction(const std::string & funName,
     mContext->addInputRecordType((boost::format("input%1%") % i).str().c_str(), 
 				 (boost::format("__BasePointer%1%__") % i).str().c_str(), 			   
 				 *it,
-				 mask,
-				 "");
+				 mask);
   }
   mContext->IQLOutputRecord = wrap(output);
 }
@@ -1752,18 +1751,12 @@ const RecordType * IQLParserStuff::typeCheckTransfer(DynamicRecordContext & recC
   // Create an appropriate context for type checking.  This requires associating the
   // input record with a name and then inserting all the members of the record type
   // with a symbol table.
-  TypeCheckContext typeCheckContext(recCtxt);
-  std::map<std::string, const RecordType *> inputRecords;
-  inputRecords["input"] = source;
-  std::map<std::string, IQLFieldTypeRef> symbolTable;
-  for(RecordType::const_member_iterator it=source->begin_members();
-      it != source->end_members();
-      ++it) {
-    symbolTable[it->GetName()] = wrap(it->GetType());
-  }
-  typeCheckContext.IQLInputRecords = reinterpret_cast<IQLRecordMapRef>(&inputRecords);
-  typeCheckContext.TypeCheckSymbolTable = reinterpret_cast<IQLSymbolTableRef>(&symbolTable);
-  typeCheckContext.loadBuiltinFunctions();
+  std::vector<AliasedRecordType> aliased;
+  aliased.push_back(AliasedRecordType("input", source));
+  std::vector<boost::dynamic_bitset<> > masks;
+  masks.resize(1);
+  masks[0].resize(source->size(), true);
+  TypeCheckContext typeCheckContext(recCtxt, aliased, masks);
 
   // Now pass through the type checker
   ANTLR3AutoPtr<IQLTypeCheck> alz(IQLTypeCheckNew(mNodes));
@@ -1787,28 +1780,7 @@ IQLParserStuff::typeCheckTransfer(DynamicRecordContext & recCtxt,
   // Create an appropriate context for type checking.  This requires associating the
   // input records with a name and then inserting all the members of the record type
   // with a symbol table.
-  TypeCheckContext typeCheckContext(recCtxt);
-  std::map<std::string, const RecordType *> inputRecords;
-  std::map<std::string, IQLFieldTypeRef> symbolTable;
-  for(std::vector<AliasedRecordType>::const_iterator it = sources.begin(); 
-      it != sources.end();
-      ++it) {
-    std::size_t i = it - sources.begin();
-    inputRecords[it->getAlias()] = it->getType();
-
-    // TODO: Handle optional prefixing/aliasing
-    for(RecordType::const_member_iterator mit=it->getType()->begin_members();
-	mit != it->getType()->end_members();
-	++mit) {
-      std::size_t j = (std::size_t) (mit - it->getType()->begin_members());
-      if (masks[i].test(j)) {
-	symbolTable[mit->GetName()] = wrap(mit->GetType());
-      }
-    }
-  }
-  typeCheckContext.IQLInputRecords = reinterpret_cast<IQLRecordMapRef>(&inputRecords);
-  typeCheckContext.TypeCheckSymbolTable = reinterpret_cast<IQLSymbolTableRef>(&symbolTable);
-  typeCheckContext.loadBuiltinFunctions();
+  TypeCheckContext typeCheckContext(recCtxt, sources, masks);
 
   // Now pass through the type checker
   ANTLR3AutoPtr<IQLTypeCheck> alz(IQLTypeCheckNew(mNodes));
@@ -1830,24 +1802,12 @@ void IQLParserStuff::typeCheckUpdate(DynamicRecordContext & recCtxt,
   // Create an appropriate context for type checking.  This requires associating the
   // input record with a name and then inserting all the members of the record type
   // with a symbol table.
-  TypeCheckContext typeCheckContext(recCtxt);
-  std::map<std::string, const RecordType *> inputRecords;
-  std::map<std::string, IQLFieldTypeRef> symbolTable;
+  std::vector<AliasedRecordType> aliased; 
   for(std::size_t i=0; i<sources.size(); ++i) {
     std::string nm ((boost::format("input%1%") % i).str());
-    inputRecords[nm] = sources[i];
-    for(RecordType::const_member_iterator it=sources[i]->begin_members();
-	it != sources[i]->end_members();
-	++it) {
-      std::size_t j = (std::size_t) (it - sources[i]->begin_members());
-      if (masks[i].test(j)) {
-	symbolTable[it->GetName()] = wrap(it->GetType());
-      }
-    }
-  }
-  typeCheckContext.IQLInputRecords = reinterpret_cast<IQLRecordMapRef>(&inputRecords);
-  typeCheckContext.TypeCheckSymbolTable = reinterpret_cast<IQLSymbolTableRef>(&symbolTable);
-  typeCheckContext.loadBuiltinFunctions();
+    aliased.push_back(AliasedRecordType(nm, sources[i]));
+  } 
+  TypeCheckContext typeCheckContext(recCtxt, aliased, masks);
 
   // Now pass through the type checker
   ANTLR3AutoPtr<IQLTypeCheck> alz(IQLTypeCheckNew(mNodes));
@@ -2086,24 +2046,7 @@ RecordTypeTransfer2::RecordTypeTransfer2(DynamicRecordContext& recCtxt,
   // Create an appropriate context for type checking.  This requires associating the
   // input records with a name and then inserting all the members of the record type
   // with a symbol table.
-  TypeCheckContext typeCheckContext(recCtxt);
-  std::map<std::string, const RecordType *> inputRecords;
-  std::map<std::string, IQLFieldTypeRef> symbolTable;
-  for(std::vector<AliasedRecordType>::const_iterator it = mSources.begin(); 
-      it != mSources.end();
-      ++it) {
-    inputRecords[it->getAlias()] = it->getType();
-
-    // TODO: Handle optional prefixing/aliasing
-    for(RecordType::const_member_iterator mit=it->getType()->begin_members();
-	mit != it->getType()->end_members();
-	++mit) {
-      symbolTable[mit->GetName()] = wrap(mit->GetType());
-    }
-  }
-  typeCheckContext.IQLInputRecords = reinterpret_cast<IQLRecordMapRef>(&inputRecords);
-  typeCheckContext.TypeCheckSymbolTable = reinterpret_cast<IQLSymbolTableRef>(&symbolTable);
-  typeCheckContext.loadBuiltinFunctions();
+  TypeCheckContext typeCheckContext(recCtxt, mSources);
 
   // Now pass through the type checker
   ANTLR3AutoPtr<ANTLR3_COMMON_TREE_NODE_STREAM> nodes(antlr3CommonTreeNodeStreamNewTree(parserRet.tree, ANTLR3_SIZE_HINT));
@@ -2423,8 +2366,28 @@ IQLExpression * RecordTypeFunction::getAST(class DynamicRecordContext& recCtxt,
 RecordTypeFunction::RecordTypeFunction(class DynamicRecordContext& recCtxt, 
 				       const std::string & funName, 
 				       const std::vector<const RecordType *> sources, 
-				       const std::string& statements,
-				       const std::vector<std::string> * prefixes)
+				       const std::string& statements)
+  :
+  mFunName(funName),
+  mStatements(statements),
+  mFunction(NULL),
+  mImpl(NULL)
+{
+  for(std::vector<const RecordType *>::const_iterator rit = sources.begin();
+      rit != sources.end();
+      ++rit) {
+    mSources.push_back(AliasedRecordType(sources.size() == 1 ? 
+					"input" : 
+					(boost::format("input%1%") % (rit-sources.begin())).str().c_str(), 
+					*rit));
+  }
+  init(recCtxt);
+}
+
+RecordTypeFunction::RecordTypeFunction(class DynamicRecordContext& recCtxt, 
+				       const std::string & funName, 
+				       const std::vector<AliasedRecordType>& sources, 
+				       const std::string& statements)
   :
   mSources(sources),
   mFunName(funName),
@@ -2432,11 +2395,19 @@ RecordTypeFunction::RecordTypeFunction(class DynamicRecordContext& recCtxt,
   mFunction(NULL),
   mImpl(NULL)
 {
+  init(recCtxt);
+}
+
+RecordTypeFunction::~RecordTypeFunction()
+{
+  delete mImpl;
+}
+
+void RecordTypeFunction::init(DynamicRecordContext& recCtxt)
+{
   // Right now we assmue 2 input sources (one may be empty).
-  if (sources.size() != 2)
+  if (mSources.size() != 2)
     throw std::runtime_error("RecordTypeFunction requires 2 source record types (the second may be empty)");
-  if (prefixes != NULL && prefixes->size() != 2)
-    throw std::runtime_error("Must set prefixes for either all or non of record types");
 
   // Feed from an in place stream
   ANTLR3AutoPtr<ANTLR3_INPUT_STREAM> input(antlr3NewAsciiStringInPlaceStream((pANTLR3_UINT8) mStatements.c_str(),
@@ -2467,30 +2438,7 @@ RecordTypeFunction::RecordTypeFunction(class DynamicRecordContext& recCtxt,
   // input record with a name and then inserting all the members of the record type
   // with a symbol table.
   // TODO: check for name ambiguity and resolve.
-  TypeCheckContext typeCheckContext(recCtxt);
-  std::map<std::string, const RecordType *> inputRecords;
-  std::map<std::string, IQLFieldTypeRef> symbolTable;
-  for(std::vector<const RecordType *>::const_iterator rit = mSources.begin();
-      rit != mSources.end();
-      ++rit) {
-    // Is there a prefix?
-    std::string prefix(prefixes ? (*prefixes)[rit-mSources.begin()].c_str() : "");
-
-    if (prefix.size()) {
-      inputRecords[mSources.size() == 1 ? "input" : (boost::format("input%1%") % (rit-mSources.begin())).str().c_str()] = *rit;
-    } else {
-      inputRecords[prefix] = *rit;
-    }
-
-    for(RecordType::const_member_iterator it=(*rit)->begin_members();
-	it != (*rit)->end_members();
-	++it) {
-      symbolTable[prefix + it->GetName()] = wrap(it->GetType());
-    }
-  }
-  typeCheckContext.IQLInputRecords = reinterpret_cast<IQLRecordMapRef>(&inputRecords);
-  typeCheckContext.TypeCheckSymbolTable = reinterpret_cast<IQLSymbolTableRef>(&symbolTable);
-  typeCheckContext.loadBuiltinFunctions();
+  TypeCheckContext typeCheckContext(recCtxt, mSources);
 
   ANTLR3AutoPtr<ANTLR3_COMMON_TREE_NODE_STREAM> nodes(antlr3CommonTreeNodeStreamNewTree(parserRet.tree, ANTLR3_SIZE_HINT));
   
@@ -2514,26 +2462,12 @@ RecordTypeFunction::RecordTypeFunction(class DynamicRecordContext& recCtxt,
 
   // Inject the members of the input struct into the symbol table.
   // For the moment just make sure we don't have any ambiguous references
-  std::set<std::string> uniqueNames;
-  for(std::vector<const RecordType *>::const_iterator it = mSources.begin();
+  for(std::vector<AliasedRecordType>::const_iterator it = mSources.begin();
       it != mSources.end();
       ++it) {
-    for(RecordType::const_member_iterator mit = (*it)->begin_members();
-	mit != (*it)->end_members();
-	++mit) {
-      std::string tmpName(std::string(prefixes ? (*prefixes)[it-mSources.begin()].c_str() : "") + mit->GetName());
-      if (uniqueNames.end() != uniqueNames.find(tmpName)) {
-	(*it)->dump();
-	throw std::runtime_error((boost::format("Field names must be unique in in place update statements: %1%") % tmpName).str());
-      }
-      uniqueNames.insert(tmpName);
-    }
-    // Add with a prefix if provided
-    mContext->addInputRecordType(
-			   (boost::format("input%1%") % (it - mSources.begin())).str().c_str(), 
-			   (boost::format("__BasePointer%1%__") % (it - mSources.begin())).str().c_str(), 			   
-			   *it,
-			   prefixes ? (*prefixes)[it-mSources.begin()].c_str() : "");
+    mContext->addInputRecordType(it->getAlias().c_str(), 
+				 (boost::format("__BasePointer%1%__") % (it - mSources.begin())).str().c_str(), 			   
+				 it->getType());
   }
 
   // Special context entry for output record required by 
@@ -2567,11 +2501,6 @@ RecordTypeFunction::RecordTypeFunction(class DynamicRecordContext& recCtxt,
   funNames.push_back(mFunName);
   mImpl = new IQLRecordBufferMethodHandle(mBitcode, funNames);
   mFunction = (LLVMFuncType) mImpl->getFunPtr(mFunName);
-}
-
-RecordTypeFunction::~RecordTypeFunction()
-{
-  delete mImpl;
 }
 
 int32_t RecordTypeFunction::execute(RecordBuffer source, RecordBuffer target, class InterpreterContext * ctxt) const
@@ -2739,7 +2668,7 @@ RecordTypeAggregate::RecordTypeAggregate(DynamicRecordContext& recCtxt,
      ++it) {
    LLVMSetField(wrap(mContext),
 		&mContext->AggFn, 
-		IQLToLLVMBuildVariableRef(wrap(mContext), it->c_str()));
+		IQLToLLVMBuildVariableRef(wrap(mContext), it->c_str(), NULL));
  }
  // We know that aggregate initialization isn't
  // identity.  Reset the flag so we can find out

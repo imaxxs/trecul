@@ -949,18 +949,14 @@ GroupBy<_OpType>::GroupBy(DynamicRecordContext & ctxt,
   std::vector<const RecordType *> eqTypes;
   eqTypes.push_back(aggregate->getAggregate());
   eqTypes.push_back(inputType);
-  std::vector<std::string> eqPrefixes;
-  eqPrefixes.push_back("r_");
-  eqPrefixes.push_back("l_");
   std::string eqPred;
   for(std::size_t i=0; i<groupFields.size(); i++) {
     if (eqPred.size() > 0) eqPred += " AND ";
-    eqPred += (boost::format("l_%1% = r_%1%") % groupFields[i]).str();
+    eqPred += (boost::format("input1.%1% = input0.%1%") % groupFields[i]).str();
   }
   equals = new RecordTypeFunction(ctxt, "xfer5eq", 
 				  eqTypes, 
-				  eqPred, 
-				  &eqPrefixes);
+				  eqPred);
   opType2 = new _OpType(*inputType->GetFree(), hasher, equals, aggregate);
 }
 

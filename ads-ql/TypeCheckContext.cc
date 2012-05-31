@@ -36,56 +36,233 @@
 #include <boost/lexical_cast.hpp>
 #include <boost/regex.hpp>
 #include "TypeCheckContext.hh"
+#include "RecordType.hh"
 
-IQLSymbolTableRef IQLSymbolTableCreate()
+static const char * fnPrefix = "$fn";
+
+
+// This is just allowing us to avoid the RecordType.hh include.
+class RecordMemberList : public std::vector<RecordMember>
 {
-  return reinterpret_cast<IQLSymbolTableRef>(new std::map<std::string, IQLFieldTypeRef>());
+public:
+  RecordMemberList()  {}
+};
+
+TreculSymbolTableEntry::TreculSymbolTableEntry()
+  :
+  mType(NULL),
+  mValue(NULL)
+{
 }
 
-void IQLSymbolTableFree(IQLSymbolTableRef symTable)
+TreculSymbolTableEntry::TreculSymbolTableEntry(const FieldType * ft)
+  :
+  mType(ft),
+  mValue(NULL)
 {
-  delete reinterpret_cast<std::map<std::string, IQLFieldTypeRef> *>(symTable);
 }
 
-void IQLSymbolTableClear(IQLSymbolTableRef symTable)
+TreculSymbolTableEntry::TreculSymbolTableEntry(IQLToLLVMLValue * val)
+  :
+  mType(NULL),
+  mValue(val)
 {
-  reinterpret_cast<std::map<std::string, IQLFieldTypeRef> *>(symTable)->clear();
 }
 
-void IQLSymbolTableAdd(IQLSymbolTableRef symTable, const char * name, IQLFieldTypeRef value)
+TreculSymbolTableEntry::TreculSymbolTableEntry(const FieldType * ft, 
+					       IQLToLLVMLValue * val)
+  :
+  mType(ft),
+  mValue(val)
 {
-  (*reinterpret_cast<std::map<std::string, IQLFieldTypeRef> *>(symTable))[name] = value;
 }
 
-IQLFieldTypeRef IQLSymbolTableLookup(IQLSymbolTableRef symTable, const char * name)
+TreculSymbolTableEntry::~TreculSymbolTableEntry()
 {
-  std::map<std::string, IQLFieldTypeRef> * tab = reinterpret_cast<std::map<std::string, IQLFieldTypeRef> *>(symTable);
-  std::map<std::string, IQLFieldTypeRef>::const_iterator it = tab->find(name);
-  if (tab->end() == it) {
-    std::string fields;
-    for(std::map<std::string, IQLFieldTypeRef>::const_iterator it = tab->begin();
-	it != tab->end();
-	++it) {
-      if (fields.size()) fields += ", ";
-      fields += it->first;
-    }
-    throw std::runtime_error((boost::format("Undefined variable: %1%.  Available fields = (%2%)") % name % fields).str());
-    //return NULL;
+}
+
+const FieldType * TreculSymbolTableEntry::getType() const
+{
+  return mType;
+}
+
+IQLToLLVMLValue * TreculSymbolTableEntry::getValue() const
+{
+  return mValue;;
+}
+
+TreculSymbolTable::TreculSymbolTable()
+{
+}
+
+TreculSymbolTable::~TreculSymbolTable()
+{
+  clear();
+}
+
+void TreculSymbolTable::clear()
+{
+  for(table_iterator it = mNameLookup.begin(),
+	e = mNameLookup.end(); it != e; ++it) {
+    delete it->second;
   }
-  return it->second;
+  mNameLookup.clear();
+  mUnprefixedNameLookup.clear();
 }
+
+TreculSymbolTableEntry * TreculSymbolTable::lookup(const char * nm, const char * nm2)
+{
+  if (nm2) {
+    std::string key(nm);
+    key += ".";
+    key += nm2;
+    table_const_iterator it = mNameLookup.find(key);
+    if (it == mNameLookup.end()) {
+      std::string fields;
+      for(table_const_iterator it = mNameLookup.begin();
+	  it != mNameLookup.end();
+	  ++it) {
+	if (boost::algorithm::starts_with(it->first, fnPrefix)) continue;
+	if (fields.size()) fields += ",";
+	fields += it->first;
+      }
+      throw std::runtime_error((boost::format("Undefined variable %1%.%2%/'%4%': available fields %3%") % nm % nm2 % fields % key).str());
+    }    
+    return it->second;
+  } else {
+    table_const_iterator it = mUnprefixedNameLookup.find(nm);
+    if (it == mUnprefixedNameLookup.end()) {
+      std::string fields;
+      for(table_const_iterator it = mNameLookup.begin();
+	  it != mNameLookup.end();
+	  ++it) {
+	if (boost::algorithm::starts_with(it->first, fnPrefix)) continue;
+	if (fields.size()) fields += ",";
+	fields += it->first;
+      }
+      throw std::runtime_error((boost::format("Undefined variable %1% : available fields %2%") % nm % fields).str());
+    } else if (&mAmbiguous == it->second) {
+      throw std::runtime_error((boost::format("Ambiguous variable reference %1%") % nm).str());
+    }
+    return it->second;
+  }
+}
+
+void TreculSymbolTable::add(const char * nm, const char * nm2, 
+			    const FieldType * ft, IQLToLLVMLValue * val)
+{
+  std::string key(nm);
+  if (nm2 != NULL) {
+    key += ".";
+    key += nm2;
+  }
+  TreculSymbolTableEntry * e =  new TreculSymbolTableEntry(ft, val);
+  mNameLookup[key] = e;
+  std::string unprefixed(nm2 ? nm2 : nm);
+  table_iterator it = mUnprefixedNameLookup.find(unprefixed);
+  if (it != mUnprefixedNameLookup.end()) {
+    it->second = &mAmbiguous;
+  } else {
+    mUnprefixedNameLookup[unprefixed] = e;
+  }
+}
+
+void TreculSymbolTable::add(const char * nm, const char * nm2, 
+			    IQLToLLVMLValue * val)
+{
+  add(nm, nm2, NULL, val);
+}
+
+void TreculSymbolTable::add(const char * nm, const char * nm2, 
+			    const FieldType * ft)
+{
+  add(nm, nm2, ft, NULL);
+}
+
+bool TreculSymbolTable::contains(const char * nm, const char * nm2) const
+{
+  if (nm2) {
+    std::string key(nm);
+    key += ".";
+    key += nm2;
+    table_const_iterator it = mNameLookup.find(key);
+    return (it != mNameLookup.end());
+  } else {
+    table_const_iterator it = mUnprefixedNameLookup.find(nm);
+    return (it != mUnprefixedNameLookup.end());
+  }
+}
+
+// void IQLSymbolTableAdd(TreculSymbolTable * symTable, const char * name, IQLFieldTypeRef value)
+// {
+//   symTable->add(name, NULL, unwrap(value));
+// }
+
+// IQLFieldTypeRef IQLSymbolTableLookup(TreculSymbolTable * symTable, const char * name)
+// {
+//   std::map<std::string, IQLFieldTypeRef> * tab = reinterpret_cast<std::map<std::string, IQLFieldTypeRef> *>(symTable);
+//   std::map<std::string, IQLFieldTypeRef>::const_iterator it = tab->find(name);
+//   if (tab->end() == it) {
+//     std::string fields;
+//     for(std::map<std::string, IQLFieldTypeRef>::const_iterator it = tab->begin();
+// 	it != tab->end();
+// 	++it) {
+//       if (fields.size()) fields += ", ";
+//       fields += it->first;
+//     }
+//     throw std::runtime_error((boost::format("Undefined variable: %1%.  Available fields = (%2%)") % name % fields).str());
+//     //return NULL;
+//   }
+//   return it->second;
+// }
 
 TypeCheckContext::TypeCheckContext(DynamicRecordContext& recCtxt)
   :
   mContext(recCtxt),
-  IQLInputRecords(NULL),
   mOutputRecord(NULL),
-  TypeCheckSymbolTable(NULL),
+  mTypeCheckSymbolTable(NULL),
   mAggregateTypeCheckSymbolTable(NULL),
   mSaveTypeCheckSymbolTable(NULL),
   mRecordMembers(NULL),
+  mAggregateMembers(NULL),
   mAggregateRecord(NULL)
 {
+}
+
+TypeCheckContext::TypeCheckContext(DynamicRecordContext & recCtxt,
+				   const std::vector<AliasedRecordType>& sources,
+				   const std::vector<boost::dynamic_bitset<> >& masks)
+  :
+  mContext(recCtxt),
+  mOutputRecord(NULL),
+  mTypeCheckSymbolTable(NULL),
+  mAggregateTypeCheckSymbolTable(NULL),
+  mSaveTypeCheckSymbolTable(NULL),
+  mRecordMembers(NULL),
+  mAggregateMembers(NULL),
+  mAggregateRecord(NULL)
+{
+  init(sources, masks);
+}
+
+TypeCheckContext::TypeCheckContext(DynamicRecordContext & recCtxt,
+				   const std::vector<AliasedRecordType>& sources)
+  :
+  mContext(recCtxt),
+  mOutputRecord(NULL),
+  mTypeCheckSymbolTable(NULL),
+  mAggregateTypeCheckSymbolTable(NULL),
+  mSaveTypeCheckSymbolTable(NULL),
+  mRecordMembers(NULL),
+  mAggregateMembers(NULL),
+  mAggregateRecord(NULL)
+{
+  std::vector<boost::dynamic_bitset<> > masks;
+  masks.resize(sources.size());
+  for(std::size_t i=0; i<sources.size(); ++i) {
+    masks[i].resize(sources[i].getType()->size(), true);
+  }
+  init(sources, masks);
 }
 
 TypeCheckContext::TypeCheckContext(DynamicRecordContext & recCtxt,
@@ -94,12 +271,12 @@ TypeCheckContext::TypeCheckContext(DynamicRecordContext & recCtxt,
 				   bool isOlap)
   :
   mContext(recCtxt),
-  IQLInputRecords(NULL),
   mOutputRecord(NULL),
-  TypeCheckSymbolTable(NULL),
+  mTypeCheckSymbolTable(NULL),
   mAggregateTypeCheckSymbolTable(NULL),
   mSaveTypeCheckSymbolTable(NULL),
   mRecordMembers(NULL),
+  mAggregateMembers(NULL),
   mAggregateRecord(NULL)
 {
   mInputRecords["input"] = input;
@@ -119,19 +296,18 @@ TypeCheckContext::TypeCheckContext(DynamicRecordContext & recCtxt,
       it != input->end_members();
       ++it) {
     if (isOlap || groupKeySet.end() != groupKeySet.find(it->GetName())) {
-      mSymbolTable[it->GetName()] = wrap(it->GetType());
+      mSymbolTable.add("input", it->GetName().c_str(), it->GetType());
     }
   }
   // Put all fields into the agg symbol table
   for(RecordType::const_member_iterator it=input->begin_members();
       it != input->end_members();
       ++it) {
-    mAggregateTable[it->GetName()] = wrap(it->GetType());
+    mAggregateTable.add("input", it->GetName().c_str(), it->GetType());
   }
   // TODO: Make this C wrapper stuff go away.
-  IQLInputRecords = reinterpret_cast<IQLRecordMapRef>(&mInputRecords);
-  TypeCheckSymbolTable = reinterpret_cast<IQLSymbolTableRef>(&mSymbolTable);
-  mAggregateTypeCheckSymbolTable = reinterpret_cast<IQLSymbolTableRef>(&mAggregateTable);
+  mTypeCheckSymbolTable = &mSymbolTable;
+  mAggregateTypeCheckSymbolTable = &mAggregateTable;
   
   // The group by fields are always in the aggregate record as well.
   // TODO: Low priority.  Here we are saying that the aggregate record
@@ -140,10 +316,11 @@ TypeCheckContext::TypeCheckContext(DynamicRecordContext & recCtxt,
   // then a non-trivial transfer will result.  It might be nice to figure out a
   // way of determining the structure of the aggregate record so that it mimics
   // the select list.
+  mAggregateMembers = new RecordMemberList();
   for(std::vector<std::string>::const_iterator it = groupKeys.begin();
       it != groupKeys.end();
       ++it) {
-    mAggregateMembers.push_back(input->getMember(*it));
+    mAggregateMembers->push_back(input->getMember(*it));
   }
 
   loadBuiltinFunctions();
@@ -151,15 +328,39 @@ TypeCheckContext::TypeCheckContext(DynamicRecordContext & recCtxt,
 
 TypeCheckContext::~TypeCheckContext()
 {
+  delete mRecordMembers;
+  delete mAggregateMembers;
+}
+
+void TypeCheckContext::init(const std::vector<AliasedRecordType>& sources,
+			    const std::vector<boost::dynamic_bitset<> >& masks)
+{
+  for(std::vector<AliasedRecordType>::const_iterator it = sources.begin(); 
+      it != sources.end();
+      ++it) {
+    std::size_t i = it - sources.begin();
+    mInputRecords[it->getAlias()] = it->getType();
+
+    for(RecordType::const_member_iterator mit=it->getType()->begin_members();
+	mit != it->getType()->end_members();
+	++mit) {
+      std::size_t j = (std::size_t) (mit - it->getType()->begin_members());
+      if (masks[i].test(j)) {
+	mSymbolTable.add(it->getAlias().c_str(), mit->GetName().c_str(), mit->GetType());
+      }
+    }
+  }
+  mTypeCheckSymbolTable = &mSymbolTable;
+  loadBuiltinFunctions();
 }
 
 bool TypeCheckContext::isBuiltinFunction(const char * name)
 {
   
-  symbol_table * tab = reinterpret_cast<symbol_table *>(TypeCheckSymbolTable);
-  symbol_table::const_iterator it = tab->find(name);
-  return (tab->end() != it &&
-	  unwrap(it->second)->GetEnum() == FieldType::FUNCTION);
+  if (!mTypeCheckSymbolTable->contains(fnPrefix, name)) 
+    return false;
+  TreculSymbolTableEntry * e = mTypeCheckSymbolTable->lookup(fnPrefix, name);
+  return e->getType()->GetEnum() == FieldType::FUNCTION;
 }
 
 const FieldType * TypeCheckContext::castTo(const FieldType * lhs, 
@@ -230,154 +431,130 @@ void TypeCheckContext::loadBuiltinFunctions()
   // Create function type for unary math operations.
   DynamicRecordContext & drc (ctxt->mContext);
   DoubleType * d = DoubleType::Get(drc);
-  IQLFieldTypeRef unaryDoubleOp = wrap(FunctionType::Get(drc, d, d));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "sqrt",
-		    unaryDoubleOp);
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "log",
-		    unaryDoubleOp);
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "exp",
-		    unaryDoubleOp);
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "length",
-		    wrap(FunctionType::Get(drc, 
-					   VarcharType::Get(drc), 
-					   Int32Type::Get(drc))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "substr",
-		    wrap(FunctionType::Get(drc, 
-					   VarcharType::Get(drc), 
-					   Int32Type::Get(drc),
-					   Int32Type::Get(drc),
-					   VarcharType::Get(drc))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "trim",
-		    wrap(FunctionType::Get(drc, 
-					   VarcharType::Get(drc), 
-					   VarcharType::Get(drc))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "ltrim",
-		    wrap(FunctionType::Get(drc, 
-					   VarcharType::Get(drc), 
-					   VarcharType::Get(drc))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "rtrim",
-		    wrap(FunctionType::Get(drc, 
-					   VarcharType::Get(drc), 
-					   VarcharType::Get(drc))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "lower",
-		    wrap(FunctionType::Get(drc, 
-					   VarcharType::Get(drc), 
-					   VarcharType::Get(drc))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "upper",
-		    wrap(FunctionType::Get(drc, 
-					   VarcharType::Get(drc), 
-					   VarcharType::Get(drc))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "md5",
-		    wrap(FunctionType::Get(drc, 
-					   VarcharType::Get(drc), 
-					   CharType::Get(drc, 32))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "utc_timestamp",
-		    wrap(FunctionType::Get(drc, 
-					   DatetimeType::Get(drc))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "unix_timestamp",
-		    wrap(FunctionType::Get(drc, 
-					   DatetimeType::Get(drc),
-					   Int64Type::Get(drc))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "from_unixtime",
-		    wrap(FunctionType::Get(drc, 
-					   Int64Type::Get(drc),
-					   DatetimeType::Get(drc))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "date",
-		    wrap(FunctionType::Get(drc, 
-					   DatetimeType::Get(drc),
-					   DateType::Get(drc))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "dayofweek",
-		    wrap(FunctionType::Get(drc, 
-					   DateType::Get(drc),
-					   Int32Type::Get(drc))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "dayofmonth",
-		    wrap(FunctionType::Get(drc, 
-					   DateType::Get(drc),
-					   Int32Type::Get(drc))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "dayofyear",
-		    wrap(FunctionType::Get(drc, 
-					   DateType::Get(drc),
-					   Int32Type::Get(drc))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "month",
-		    wrap(FunctionType::Get(drc, 
-					   DateType::Get(drc),
-					   Int32Type::Get(drc))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "year",
-		    wrap(FunctionType::Get(drc, 
-					   DateType::Get(drc),
-					   Int32Type::Get(drc))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "last_day",
-		    wrap(FunctionType::Get(drc, 
-					   DateType::Get(drc),
-					   DateType::Get(drc))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "julian_day",
-		    wrap(FunctionType::Get(drc, 
-					   DateType::Get(drc),
-					   Int32Type::Get(drc))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "datediff",
-		    wrap(FunctionType::Get(drc, 
-					   DateType::Get(drc),
-					   DateType::Get(drc),
-					   Int32Type::Get(drc))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "akid16_to_akid64",
-		    wrap(FunctionType::Get(drc, 
-					   CharType::Get(drc, 32),
-					   CharType::Get(drc, 22))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "akid64_to_akid16",
-		    wrap(FunctionType::Get(drc, 
-					   CharType::Get(drc, 22),
-					   CharType::Get(drc, 32))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "akid64_to_akid16_checksum",
-		    wrap(FunctionType::Get(drc, 
-					   CharType::Get(drc, 22),
-					   CharType::Get(drc, 64))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "akid64_get_random",
-		    wrap(FunctionType::Get(drc, 
-					   CharType::Get(drc, 22),
-					   Int32Type::Get(drc))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "akid64_get_creation_time",
-		    wrap(FunctionType::Get(drc, 
-					   CharType::Get(drc, 22),
-					   DatetimeType::Get(drc))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "akid64_decrypt",
-		    wrap(FunctionType::Get(drc, 
-					   VarcharType::Get(drc),
-					   CharType::Get(drc, 22))));
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable,
-		    "akid64_encrypt",
-		    wrap(FunctionType::Get(drc, 
-					   CharType::Get(drc, 22),
-					   Int32Type::Get(drc),
-					   VarcharType::Get(drc))));
+  const FieldType * unaryDoubleOp = FunctionType::Get(drc, d, d);
+  mTypeCheckSymbolTable->add(fnPrefix, "sqrt", unaryDoubleOp);
+  mTypeCheckSymbolTable->add(fnPrefix, "log", unaryDoubleOp);
+  mTypeCheckSymbolTable->add(fnPrefix, "exp", unaryDoubleOp);
+  mTypeCheckSymbolTable->add(fnPrefix, "length", 
+			     FunctionType::Get(drc, 
+					       VarcharType::Get(drc), 
+					       Int32Type::Get(drc)));
+  mTypeCheckSymbolTable->add(fnPrefix, "substr", 
+			     FunctionType::Get(drc, 
+					       VarcharType::Get(drc), 
+					       Int32Type::Get(drc),
+					       Int32Type::Get(drc),
+					       VarcharType::Get(drc)));
+  mTypeCheckSymbolTable->add(fnPrefix, "trim", 
+			     FunctionType::Get(drc, 
+					       VarcharType::Get(drc), 
+					       VarcharType::Get(drc)));
+  mTypeCheckSymbolTable->add(fnPrefix, "ltrim", 
+			     FunctionType::Get(drc, 
+					       VarcharType::Get(drc), 
+					       VarcharType::Get(drc)));
+  mTypeCheckSymbolTable->add(fnPrefix, "rtrim", 
+			     FunctionType::Get(drc, 
+					       VarcharType::Get(drc), 
+					       VarcharType::Get(drc)));
+  mTypeCheckSymbolTable->add(fnPrefix, "lower", 
+			     FunctionType::Get(drc, 
+					       VarcharType::Get(drc), 
+					       VarcharType::Get(drc)));
+  mTypeCheckSymbolTable->add(fnPrefix, "upper", 
+			     FunctionType::Get(drc, 
+					       VarcharType::Get(drc), 
+					       VarcharType::Get(drc)));
+  mTypeCheckSymbolTable->add(fnPrefix, "md5", 
+			     FunctionType::Get(drc, 
+					       VarcharType::Get(drc), 
+					       CharType::Get(drc, 32)));
+  mTypeCheckSymbolTable->add(fnPrefix, "utc_timestamp", 
+			     FunctionType::Get(drc, 
+					       DatetimeType::Get(drc)));
+  mTypeCheckSymbolTable->add(fnPrefix, "unix_timestamp", 
+			     FunctionType::Get(drc, 
+					       DatetimeType::Get(drc),
+					       Int64Type::Get(drc)));
+  mTypeCheckSymbolTable->add(fnPrefix, "from_unixtime", 
+			     FunctionType::Get(drc, 
+					       Int64Type::Get(drc),
+					       DatetimeType::Get(drc)));
+  mTypeCheckSymbolTable->add(fnPrefix, "date", 
+			     FunctionType::Get(drc, 
+					       DatetimeType::Get(drc),
+					       DateType::Get(drc)));
+  mTypeCheckSymbolTable->add(fnPrefix, "dayofweek", 
+			     FunctionType::Get(drc, 
+					       DateType::Get(drc),
+					       Int32Type::Get(drc)));
+  mTypeCheckSymbolTable->add(fnPrefix, "dayofmonth", 
+			     FunctionType::Get(drc, 
+					       DateType::Get(drc),
+					       Int32Type::Get(drc)));
+  mTypeCheckSymbolTable->add(fnPrefix, "dayofyear", 
+			     FunctionType::Get(drc, 
+					       DateType::Get(drc),
+					       Int32Type::Get(drc)));
+  mTypeCheckSymbolTable->add(fnPrefix, "month", 
+			     FunctionType::Get(drc, 
+					       DateType::Get(drc),
+					       Int32Type::Get(drc)));
+  mTypeCheckSymbolTable->add(fnPrefix, "year", 
+			     FunctionType::Get(drc, 
+					       DateType::Get(drc),
+					       Int32Type::Get(drc)));
+  mTypeCheckSymbolTable->add(fnPrefix, "last_day", 
+			     FunctionType::Get(drc, 
+					       DateType::Get(drc),
+					       DateType::Get(drc)));
+  mTypeCheckSymbolTable->add(fnPrefix, "julian_day", 
+			     FunctionType::Get(drc, 
+					       DateType::Get(drc),
+					       Int32Type::Get(drc)));
+  mTypeCheckSymbolTable->add(fnPrefix, "datediff", 
+			     FunctionType::Get(drc, 
+					       DateType::Get(drc),
+					       DateType::Get(drc),
+					       Int32Type::Get(drc)));
+  mTypeCheckSymbolTable->add(fnPrefix, "akid16_to_akid64", 
+			     FunctionType::Get(drc, 
+					       CharType::Get(drc, 32),
+					       CharType::Get(drc, 22)));
+  mTypeCheckSymbolTable->add(fnPrefix, "akid64_to_akid16", 
+			     FunctionType::Get(drc, 
+					       CharType::Get(drc, 22),
+					       CharType::Get(drc, 32)));
+  mTypeCheckSymbolTable->add(fnPrefix, "akid64_to_akid16_checksum", 
+			     FunctionType::Get(drc, 
+					       CharType::Get(drc, 22),
+					       CharType::Get(drc, 64)));
+  mTypeCheckSymbolTable->add(fnPrefix, "akid64_get_random", 
+			     FunctionType::Get(drc, 
+					       CharType::Get(drc, 22),
+					       Int32Type::Get(drc)));
+  mTypeCheckSymbolTable->add(fnPrefix, "akid64_get_creation_time", 
+			     FunctionType::Get(drc, 
+					       CharType::Get(drc, 22),
+					       DatetimeType::Get(drc)));
+  mTypeCheckSymbolTable->add(fnPrefix, "akid64_decrypt", 
+			     FunctionType::Get(drc, 
+					       VarcharType::Get(drc),
+					       CharType::Get(drc, 22)));
+  mTypeCheckSymbolTable->add(fnPrefix, "akid64_encrypt", 
+			     FunctionType::Get(drc, 
+					       CharType::Get(drc, 22),
+					       Int32Type::Get(drc),
+					       VarcharType::Get(drc)));
+}
+
+const RecordType * TypeCheckContext::getAggregateRecord() 
+{
+  if (mAggregateTypeCheckSymbolTable != NULL &&
+      mAggregateRecord == NULL) {
+    mAggregateRecord = new RecordType(*mAggregateMembers);
+  }  
+  return mAggregateRecord;
 }
 
 void TypeCheckContext::buildSetValue(const FieldType * lhs,
@@ -394,6 +571,18 @@ void TypeCheckContext::beginSwitch(const FieldType * e)
   if (e != Int32Type::Get(mContext) &&
       e != Int64Type::Get(mContext))
     throw std::runtime_error("Switch expression must be integer");
+}
+
+const FieldType * TypeCheckContext::buildVariableRef(const char * nm,
+						     const char * nm2)
+{
+  TreculSymbolTableEntry * e = mTypeCheckSymbolTable->lookup(nm, nm2);
+  return e->getType();
+}
+
+void TypeCheckContext::buildLocal(const char * nm, const FieldType * ty)
+{
+  mTypeCheckSymbolTable->add(nm, NULL, ty);
 }
 
 const FieldType * TypeCheckContext::buildArray(const std::vector<const FieldType *>& e)
@@ -423,7 +612,8 @@ const FieldType * TypeCheckContext::buildArrayRef(const char * nm,
       idx != Int64Type::Get(mContext))
     throw std::runtime_error("Array index must be integer");
 
-  const FieldType * arrayTy = unwrap(IQLSymbolTableLookup(TypeCheckSymbolTable, nm));
+  // TODO: Support compound name son arrays.
+  const FieldType * arrayTy = lookupType(nm, NULL);
   if (arrayTy->GetEnum() == FieldType::FIXED_ARRAY) {
     const FieldType * elementTy = static_cast<const FixedArrayType *>(arrayTy)->getElementType();
     return elementTy;
@@ -597,21 +787,21 @@ void TypeCheckContext::addCondition(const FieldType * condVal)
 
 void TypeCheckContext::addValue(const FieldType * thenVal)
 {
-  IQLFieldTypeRef curType = mCaseType.top();
+  const FieldType * curType = mCaseType.top();
   if (curType != NULL) {
-    thenVal = leastCommonTypeNullable(thenVal, unwrap(mCaseType.top()));
+    thenVal = leastCommonTypeNullable(thenVal, mCaseType.top());
     if (thenVal == NULL) {
       throw std::runtime_error("Incompatible types in CASE expression");
     }
   }
   mCaseType.pop();
-  mCaseType.push(wrap(thenVal));
+  mCaseType.push(thenVal);
 }
 
 const FieldType * TypeCheckContext::buildCase()
 {
   // The least common super type of values.
-  const FieldType * ret = unwrap(mCaseType.top());
+  const FieldType * ret = mCaseType.top();
   mCaseType.pop();
   return ret;
 }
@@ -662,10 +852,9 @@ void TypeCheckContext::addField(const char * name, const FieldType * ty)
 
 void TypeCheckContext::addFields(const char * recordName)
 {
-  const std::map<std::string, const RecordType *>& recordTypes(*reinterpret_cast<std::map<std::string, const RecordType *> *>(IQLInputRecords));
   // Find the record struct in the named inputs.
-  std::map<std::string, const RecordType *>::const_iterator it = recordTypes.find(recordName);
-  if (it == recordTypes.end())
+  std::map<std::string, const RecordType *>::const_iterator it = mInputRecords.find(recordName);
+  if (it == mInputRecords.end())
     throw std::runtime_error((boost::format("Undefined input record: %1%") % recordName).str());
   // Add each of the members of this record into the target.
   for(RecordType::const_member_iterator mit = it->second->begin_members();
@@ -681,10 +870,9 @@ void TypeCheckContext::quotedId(const char * id, const char * format)
   boost::regex ex(idEx.substr(1, idEx.size() -2));
   std::string fmt(format ? format : "``");
   fmt = fmt.substr(1, fmt.size()-2);
-  const std::map<std::string, const RecordType *>& recordTypes(*reinterpret_cast<std::map<std::string, const RecordType *> *>(IQLInputRecords));
   // Find the record struct in the named inputs.
-  for(std::map<std::string, const RecordType *>::const_iterator it = recordTypes.begin();
-      it != recordTypes.end();
+  for(std::map<std::string, const RecordType *>::const_iterator it = mInputRecords.begin();
+      it != mInputRecords.end();
       ++it) {
     // Add each of the members of this record into the target.
     for(RecordType::const_member_iterator mit = it->second->begin_members();
@@ -754,25 +942,30 @@ void TypeCheckContext::beginAggregateFunction()
   if (mAggregateTypeCheckSymbolTable == NULL) {
     throw std::runtime_error("Cannot use aggregate functions outside of group by");
   }
-  std::swap(TypeCheckSymbolTable, mSaveTypeCheckSymbolTable);
-  std::swap(TypeCheckSymbolTable, mAggregateTypeCheckSymbolTable);
+  std::swap(mTypeCheckSymbolTable, mSaveTypeCheckSymbolTable);
+  std::swap(mTypeCheckSymbolTable, mAggregateTypeCheckSymbolTable);
 }
 
 const FieldType * TypeCheckContext::buildAggregateFunction(const FieldType * ty)
 {
   // Switch back to the top level context for the aggregate (e.g. group by
   // fields only in the symbol table).
-  std::swap(TypeCheckSymbolTable, mAggregateTypeCheckSymbolTable);
-  std::swap(TypeCheckSymbolTable, mSaveTypeCheckSymbolTable);
+  std::swap(mTypeCheckSymbolTable, mAggregateTypeCheckSymbolTable);
+  std::swap(mTypeCheckSymbolTable, mSaveTypeCheckSymbolTable);
   // TODO: Add proper checks and conversions for ty.
   // TODO: Not all aggregate functions have nullable output
   // SUM, MIN and MAX do however (COUNT will not when it is added).
   ty = ty->clone(true);
   // Add a member to the aggregate record
   std::string aggregateMember((boost::format("__AggFn%1%__") % 
-			       mAggregateMembers.size()).str());
-  mAggregateMembers.push_back(RecordMember(aggregateMember,
+			       mAggregateMembers->size()).str());
+  mAggregateMembers->push_back(RecordMember(aggregateMember,
 					   ty));
   return ty;
 }
 
+const FieldType * TypeCheckContext::lookupType(const char * nm, const char * nm2)
+{
+  TreculSymbolTableEntry * entry = mTypeCheckSymbolTable->lookup(nm, nm2);
+  return entry->getType();
+}

@@ -1408,8 +1408,11 @@ RecordType::RecordType(const std::vector<RecordMember>& members)
   for(const_member_iterator it = begin_members();
       it != end_members();
       ++it) {
-    if (mMemberNames.end() != mMemberNames.find(it->GetName()))
-      throw std::runtime_error("Duplicate field name in record");
+    if (mMemberNames.end() != mMemberNames.find(it->GetName())) {
+      std::string msg = (boost::format("Duplicate field name %1%"
+				       " in record") % it->GetName()).str();
+      throw std::runtime_error(msg);
+    }
     mMemberNames[it->GetName()] = std::size_t(it - begin_members());
     if (it->GetType()->isNullable()) {
       mHasNullFields = true;
@@ -1564,10 +1567,9 @@ llvm::Value * RecordType::LLVMMemberGetPointer(const std::string& member,
 					    LLVMPointerType(llvm::wrap(mMembers[it->second].GetType()->LLVMGetType(ctxt)), 0),
 					    member.c_str());
   if (populateSymbolTable) {
-    std::string prefixedMemberName(std::string(prefix) + member);
     ctxt->defineFieldVariable(basePointer,
+			      prefix,
 			      member.c_str(),
-			      prefixedMemberName.c_str(),
 			      this);
   }
 

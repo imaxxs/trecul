@@ -35,6 +35,7 @@
 #include "CodeGenerationContext.hh"
 #include "LLVMGen.h"
 #include "RecordType.hh"
+#include "TypeCheckContext.hh"
 
 IQLToLLVMValue::IQLToLLVMValue (LLVMValueRef val, 
 				IQLToLLVMValue::ValueType globalOrLocal)
@@ -150,7 +151,7 @@ IQLToLLVMField::IQLToLLVMField(CodeGenerationContext * ctxt,
   mBasePointer(NULL),
   mRecordType(recordType)
 {
-  mBasePointer = llvm::unwrap(ctxt->lookupValue(recordName.c_str())->getValue());
+  mBasePointer = llvm::unwrap(ctxt->lookupValue(recordName.c_str(), NULL)->getValue());
 }
 
 IQLToLLVMField::IQLToLLVMField(const RecordType * recordType,
@@ -396,44 +397,51 @@ void CodeGenerationContext::defineVariable(const char * name,
 					      NULL, globalOrLocal);
   IQLToLLVMLocal * local = new IQLToLLVMLocal(unwrap(tmp),
 					      nullVal);
-  mSymbolTable->add(name, local);
+  mSymbolTable->add(name, NULL, local);
 }
 
 void CodeGenerationContext::defineFieldVariable(llvm::Value * basePointer,
+						const char * prefix,
 						const char * memberName,
-						const char * prefixedMemberName,
 						const RecordType * recordType)
 {
   IQLToLLVMField * field = new IQLToLLVMField(recordType,
 					      memberName,
 					      basePointer);
-  mSymbolTable->add(prefixedMemberName, field);
+  mSymbolTable->add(prefix, memberName, field);
 }
 
 const IQLToLLVMLValue * 
-CodeGenerationContext::lookup(const char * name)
+CodeGenerationContext::lookup(const char * name, const char * name2)
 {
-  IQLToLLVMLValue * lval = mSymbolTable->lookup(name);
-  return lval;
+  TreculSymbolTableEntry * lval = mSymbolTable->lookup(name, name2); 
+  return lval->getValue();
 }
 
 const IQLToLLVMValue * 
-CodeGenerationContext::lookupValue(const char * name)
+CodeGenerationContext::lookupValue(const char * name, const char * name2)
 {
-  IQLToLLVMLValue * lval = mSymbolTable->lookup(name);
-  return lval->getEntirePointer(this);
+  TreculSymbolTableEntry * lval = mSymbolTable->lookup(name, name2);
+  return lval->getValue()->getEntirePointer(this);
+}
+
+const IQLToLLVMValue * 
+CodeGenerationContext::lookupBasePointer(const char * name)
+{
+  TreculSymbolTableEntry * lval = mSymbolTable->lookup(name, NULL);
+  return lval->getValue()->getEntirePointer(this);
 }
 
 LLVMValueRef CodeGenerationContext::getContextArgumentRef()
 {
-  return lookupValue("__DecimalContext__")->getValue();
+  return lookupValue("__DecimalContext__", NULL)->getValue();
 }
 
 void CodeGenerationContext::reinitializeForTransfer()
 {
   delete (local_cache *) AllocaCache;
   delete mSymbolTable;
-  mSymbolTable = new SymbolTable();
+  mSymbolTable = new TreculSymbolTable();
   AllocaCache = new local_cache();
 }
 
@@ -448,7 +456,7 @@ void CodeGenerationContext::reinitialize()
 void CodeGenerationContext::createFunctionContext()
 {
   LLVMBuilder = LLVMCreateBuilderInContext(LLVMContext);
-  mSymbolTable = new SymbolTable();
+  mSymbolTable = new TreculSymbolTable();
   LLVMFunction = NULL;
   IQLRecordArguments = wrap(new std::map<std::string, std::pair<std::string, const RecordType*> >());
   IQLOutputRecord = NULL;
@@ -457,7 +465,7 @@ void CodeGenerationContext::createFunctionContext()
 
 void CodeGenerationContext::dumpSymbolTable()
 {
-  mSymbolTable->dump();
+  // mSymbolTable->dump();
 }
 
 void CodeGenerationContext::restoreAggregateContext(CodeGenerationFunctionContext * fCtxt)
@@ -481,21 +489,19 @@ void CodeGenerationContext::saveAggregateContext(CodeGenerationFunctionContext *
 
 void CodeGenerationContext::addInputRecordType(const char * name, 
 					       const char * argumentName, 
-					       const RecordType * rec,
-					       const char * prefix)
+					       const RecordType * rec)
 {
   boost::dynamic_bitset<> mask;
   mask.resize(rec->size(), true);
-  addInputRecordType(name, argumentName, rec, mask, prefix);
+  addInputRecordType(name, argumentName, rec, mask);
 }
 
 void CodeGenerationContext::addInputRecordType(const char * name, 
 					       const char * argumentName, 
 					       const RecordType * rec,
-					       const boost::dynamic_bitset<>& mask,
-					       const char * prefix)
+					       const boost::dynamic_bitset<>& mask)
 {
-  llvm::Value * basePointer = llvm::unwrap(lookupValue(argumentName)->getValue());
+  llvm::Value * basePointer = llvm::unwrap(lookupValue(argumentName, NULL)->getValue());
   for(RecordType::const_member_iterator it = rec->begin_members();
       it != rec->end_members();
       ++it) {
@@ -505,7 +511,7 @@ void CodeGenerationContext::addInputRecordType(const char * name,
 			      this, 
 			      basePointer,
 			      true, // Put the member into the symbol table
-			      prefix);
+			      name);
   }
   std::map<std::string, std::pair<std::string, const RecordType *> >& recordTypes(*unwrap(IQLRecordArguments));
   recordTypes[name] = std::make_pair(argumentName, rec);

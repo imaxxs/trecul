@@ -188,6 +188,7 @@ extern "C" {
 				  int line, int column);
   IQLExpressionRef IQLBuildVariable(IQLTreeFactoryRef ctxtRef,
 				    const char * text,
+				    const char * text2,
 				    int line, int column);
   IQLExpressionRef IQLBuildArrayRef(IQLTreeFactoryRef ctxtRef,
 				    const char * text,

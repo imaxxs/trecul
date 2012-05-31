@@ -1,0 +1,13 @@
+/**
+ * A simple one to many inner join with NULL.  Many side in the probe.
+ */
+g1 = generate[output="RECORDCOUNT/2 AS a", numRecords=10];
+
+g2 = generate[output="CASE WHEN RECORDCOUNT = 0 THEN NULL ELSE RECORDCOUNT - 1 END AS a", numRecords=11];
+
+j = merge_join[leftKey="a", rightKey="a", output="l.a AS a, r.a AS b"];
+g2 -> j;
+g1 -> j;
+
+d = write[file="output.txt", mode="text"];
+j -> d;

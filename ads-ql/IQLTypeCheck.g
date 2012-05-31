@@ -271,7 +271,7 @@ $ty = NULL;
 	| WSTRING_LITERAL { $ty = IQLTypeCheckBuildNVarcharType($ctxt, 0); $WSTRING_LITERAL->u = $ty; }
 	| TK_TRUE { $ty = IQLTypeCheckBuildBooleanType($ctxt, 0); $TK_TRUE->u = $ty; }
 	| TK_FALSE { $ty = IQLTypeCheckBuildBooleanType($ctxt, 0); $TK_FALSE->u = $ty; }
-	| ^(id = ID ID?) { $name = $id.text; $ty = IQLTypeCheckSymbolTableGetType($ctxt, (const char *) $id.text->chars); $id->u = $ty; }
+	| ^(id = ID (id2=ID { isBinary=1; })?) { $name = isBinary ? $id2.text : $id.text; $ty = IQLTypeCheckBuildVariableRef($ctxt, (const char *) $id.text->chars, isBinary ? (const char *) $id2.text->chars : 0); $id->u = $ty; }
 	| ^(c = '[' id=ID e = expression[$ctxt]) { $ty = IQLTypeCheckArrayRef($ctxt, (char *) $id.text->chars, e.ty); $c->u = $ty; }
     | TK_NULL { $ty = IQLTypeCheckBuildNilType($ctxt); $TK_NULL->u = $ty; }
     | ^(TK_SUM { IQLTypeCheckBeginAggregateFunction($ctxt); } e1 = expression[$ctxt] { $ty = IQLTypeCheckBuildAggregateFunction($ctxt, e1.ty); $TK_SUM->u = $ty; } )

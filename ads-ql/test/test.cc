@@ -357,37 +357,38 @@ BOOST_AUTO_TEST_CASE(testEquiJoinDetector)
     BOOST_CHECK_EQUAL(IQLExpression::EQ, 
 		      (*(r->begin_args()+1))->getNodeType());
   }
+  {
+    IQLExpression * ast = RecordTypeFunction::getAST(ctxt, "a.x = e.x OR z.x = y.x");
+    IQLEquiJoinDetector d(ctxt, &recTy, &rhsTy, ast);
+    BOOST_CHECK_EQUAL(0U, d.getLeftEquiJoinKeys().size());
+    BOOST_CHECK_EQUAL(0U, d.getRightEquiJoinKeys().size());
+    IQLExpression * e = d.getEquals();
+    BOOST_REQUIRE(NULL == e);
+    IQLExpression * r = d.getResidual();
+    BOOST_CHECK(NULL != r);
+    BOOST_CHECK_EQUAL(IQLExpression::LOR, r->getNodeType());
+    BOOST_CHECK_EQUAL(IQLExpression::EQ, 
+		      (*(r->begin_args()+0))->getNodeType());
+    BOOST_CHECK_EQUAL(IQLExpression::EQ, 
+		      (*(r->begin_args()+1))->getNodeType());
+  }
 }
 
 BOOST_AUTO_TEST_CASE(testFreeVariablesRule)
 {
   DynamicRecordContext ctxt;
-  std::vector<RecordMember> members;
-  members.push_back(RecordMember("a", CharType::Get(ctxt, 6)));
-  members.push_back(RecordMember("b", VarcharType::Get(ctxt)));
-  members.push_back(RecordMember("c", Int32Type::Get(ctxt)));
-  members.push_back(RecordMember("d", Int64Type::Get(ctxt)));
-  members.push_back(RecordMember("y", DoubleType::Get(ctxt)));
-  RecordType recTy(members);
-  std::vector<RecordMember> rhsMembers;
-  // dummy field to make sure that the offsets of fields we are comparing
-  // are different.
-  rhsMembers.push_back(RecordMember("dummy", Int32Type::Get(ctxt)));
-  rhsMembers.push_back(RecordMember("e", CharType::Get(ctxt, 6)));
-  rhsMembers.push_back(RecordMember("f", VarcharType::Get(ctxt)));
-  rhsMembers.push_back(RecordMember("g", Int32Type::Get(ctxt)));
-  rhsMembers.push_back(RecordMember("h", Int64Type::Get(ctxt)));
-  rhsMembers.push_back(RecordMember("z", DoubleType::Get(ctxt)));
-  RecordType rhsTy(rhsMembers);
-  std::vector<const RecordType *> types;
-  types.push_back(&recTy);
-  types.push_back(&rhsTy);
-
   {
     IQLExpression * ast = RecordTypeFunction::getAST(ctxt, "a = e");
     IQLFreeVariablesRule d(ast);
     BOOST_CHECK_EQUAL(2U, d.getVariables().size());
     BOOST_CHECK(d.getVariables().find("a") != d.getVariables().end());
+    BOOST_CHECK(d.getVariables().find("e") != d.getVariables().end());
+  }
+  {
+    IQLExpression * ast = RecordTypeFunction::getAST(ctxt, "a.x = e");
+    IQLFreeVariablesRule d(ast);
+    BOOST_CHECK_EQUAL(2U, d.getVariables().size());
+    BOOST_CHECK(d.getVariables().find("a.x") != d.getVariables().end());
     BOOST_CHECK(d.getVariables().find("e") != d.getVariables().end());
   }
 }
@@ -527,6 +528,13 @@ BOOST_AUTO_TEST_CASE(testPrintExpression)
     std::string expected("CASE WHEN (a[x])<(f[g[y]]) THEN b WHEN c THEN d ELSE e END");
     BOOST_CHECK(boost::algorithm::equals(ss.str(), expected));
   }
+  {
+    IQLExpression * ast = RecordTypeFunction::getAST(ctxt, "CASE WHEN a.x<f THEN b WHEN c.y THEN d ELSE e END");
+    std::stringstream ss;
+    IQLExpressionPrinter p (ss, ast);
+    std::string expected("CASE WHEN (a.x)<(f) THEN b WHEN c.y THEN d ELSE e END");
+    BOOST_CHECK(boost::algorithm::equals(ss.str(), expected));
+  }
 }
 
 BOOST_AUTO_TEST_CASE(testRecordTypeBuilder)
@@ -552,6 +560,52 @@ BOOST_AUTO_TEST_CASE(testRecordTypeBuilder)
   BOOST_CHECK(rt->hasMember("f"));
   BOOST_CHECK(rt->hasMember("g"));
   BOOST_CHECK(rt->hasMember("h"));
+}
+
+BOOST_AUTO_TEST_CASE(testTreculSymbolTable)
+{
+  DynamicRecordContext ctxt;
+  const FieldType * ft = CharType::Get(ctxt, 6);
+  TreculSymbolTable st;
+  BOOST_CHECK(!st.contains("r1", "f1"));
+  BOOST_CHECK(!st.contains("r1", "f2"));
+  BOOST_CHECK(!st.contains("r2", "f1"));
+  try {
+    st.lookup("r1", "f1");
+    BOOST_CHECK(false);
+  } catch(std::runtime_error & ) {
+  }
+  try {
+    st.lookup("f1", NULL);
+    BOOST_CHECK(false);
+  } catch(std::runtime_error & ) {
+  }
+  st.add("r1", "f1", ft);
+  BOOST_CHECK(st.contains("r1", "f1"));
+  BOOST_CHECK(!st.contains("r1", "f2"));
+  BOOST_CHECK(!st.contains("r2", "f1"));
+  BOOST_CHECK(NULL != st.lookup("r1", "f1"));
+  BOOST_CHECK(NULL != st.lookup("f1", NULL));
+  st.add("r1", "f2", ft);
+  BOOST_CHECK(st.contains("r1", "f1"));
+  BOOST_CHECK(st.contains("r1", "f2"));
+  BOOST_CHECK(!st.contains("r2", "f1"));
+  BOOST_CHECK(NULL != st.lookup("r1", "f1"));
+  BOOST_CHECK(NULL != st.lookup("f1", NULL));
+  BOOST_CHECK(NULL != st.lookup("r1", "f2"));
+  BOOST_CHECK(NULL != st.lookup("f2", NULL));
+  st.add("r2", "f1", ft);
+  BOOST_CHECK(st.contains("r1", "f1"));
+  BOOST_CHECK(st.contains("r1", "f2"));
+  BOOST_CHECK(st.contains("r2", "f1"));
+  try {
+    st.lookup("f1", NULL);
+    BOOST_CHECK(false);
+  } catch(std::runtime_error & ) {
+  }
+  BOOST_CHECK(NULL != st.lookup("r1", "f2"));
+  BOOST_CHECK(NULL != st.lookup("f2", NULL));
+  BOOST_CHECK(NULL != st.lookup("r2", "f1"));
 }
 
 BOOST_AUTO_TEST_CASE(testIQLArrayConstructor)
@@ -3542,6 +3596,80 @@ BOOST_AUTO_TEST_CASE(testIQLRecordTransfer2Integers)
   BOOST_CHECK_EQUAL(52, t1.getTarget()->getInt32("d", outputBuf));
   BOOST_CHECK_EQUAL(520, t1.getTarget()->getInt32("e", outputBuf));
   BOOST_CHECK_EQUAL(5200, t1.getTarget()->getInt32("f", outputBuf));
+}
+
+BOOST_AUTO_TEST_CASE(testIQLRecordTransfer2IntegersWithCompoundName)
+{
+  DynamicRecordContext ctxt;
+  std::vector<RecordMember> members;
+  members.push_back(RecordMember("a", Int32Type::Get(ctxt)));
+  members.push_back(RecordMember("b", Int32Type::Get(ctxt)));
+  members.push_back(RecordMember("c", Int32Type::Get(ctxt)));
+  boost::shared_ptr<RecordType> recordType(new RecordType(members));
+  members.clear();
+  members.push_back(RecordMember("d", Int32Type::Get(ctxt)));
+  members.push_back(RecordMember("e", Int32Type::Get(ctxt)));
+  members.push_back(RecordMember("a", Int32Type::Get(ctxt)));
+  boost::shared_ptr<RecordType> recordType2(new RecordType(members));
+  
+  std::vector<AliasedRecordType> types;
+  types.push_back(AliasedRecordType("table", recordType.get()));
+  types.push_back(AliasedRecordType("probe", recordType2.get()));
+
+  // Simple transfer of everything should throw because of 
+  // duplicate name in output.
+  try {
+    RecordTypeTransfer2 t(ctxt, "xfer1", types, "table.*, probe.*");
+    BOOST_CHECK(false);
+  } catch (std::runtime_error& ex) {
+    std::cout << "Received expected exception: " << ex.what() << std::endl;
+  }
+
+  // Local variable reference is ambiguous
+  try {
+    RecordTypeTransfer2 t(ctxt, "xfer1", types, "DECLARE b = table.a, b");
+    BOOST_CHECK(false);
+  } catch (std::runtime_error& ex) {
+    std::cout << "Received expected exception: " << ex.what() << std::endl;
+  }
+
+  // Selective transfer should still throw because of 
+  // duplicate name in output.
+  try {
+    RecordTypeTransfer2 t(ctxt, "xfer1", types, 
+			  "table.a, b, c, d, e, probe.a");
+    BOOST_CHECK(false);
+  } catch (std::runtime_error& ex) {
+    std::cout << "Received expected exception: " << ex.what() << std::endl;
+  }
+
+  {
+    // selective transfer with compound names
+    RecordTypeTransfer2 t1(ctxt, "xfer1", types,
+			   "table.a, b, c, d, e, probe.a AS f");
+
+    // Actually execute this thing.
+    RecordBuffer inputBuf = recordType->GetMalloc()->malloc();
+    recordType->setInt32("a", 23, inputBuf);
+    recordType->setInt32("b", 230, inputBuf);
+    recordType->setInt32("c", 2300, inputBuf);
+    RecordBuffer inputBuf2 = recordType2->GetMalloc()->malloc();
+    recordType2->setInt32("d", 52, inputBuf2);
+    recordType2->setInt32("e", 520, inputBuf2);
+    recordType2->setInt32("a", 5200, inputBuf2);
+    RecordBuffer outputBuf = t1.getTarget()->GetMalloc()->malloc();
+    InterpreterContext runtimeCtxt;
+    t1.execute(inputBuf, inputBuf2, outputBuf, &runtimeCtxt, false, false);
+    BOOST_CHECK_EQUAL(23, t1.getTarget()->getInt32("a", outputBuf));
+    BOOST_CHECK_EQUAL(230, t1.getTarget()->getInt32("b", outputBuf));
+    BOOST_CHECK_EQUAL(2300, t1.getTarget()->getInt32("c", outputBuf));
+    BOOST_CHECK_EQUAL(52, t1.getTarget()->getInt32("d", outputBuf));
+    BOOST_CHECK_EQUAL(520, t1.getTarget()->getInt32("e", outputBuf));
+    BOOST_CHECK_EQUAL(5200, t1.getTarget()->getInt32("f", outputBuf));
+    recordType->getFree().free(inputBuf);
+    recordType2->getFree().free(inputBuf2);
+    t1.getTarget()->getFree().free(outputBuf);
+  }
 }
 
 BOOST_AUTO_TEST_CASE(testIQLRecordTransferRegex)

@@ -314,11 +314,18 @@ NilExpr * NilExpr::clone() const
 
 VariableExpr::VariableExpr(DynamicRecordContext & ctxt, 
 			   const char * text,
+			   const char * text2,
 			   const SourceLocation& loc)
   :
   IQLExpression(ctxt, IQLExpression::VARIABLE, loc)
 {
-  setData(text);
+  // TODO: store this parsed?
+  std::string str(text);
+  if (text2) {
+    str += ".";
+    str += text2;
+  }
+  setData(str.c_str());
 }
 
 VariableExpr * VariableExpr::clone() const
@@ -1087,10 +1094,11 @@ IQLExpressionRef IQLBuildString(IQLTreeFactoryRef ctxtRef,
 
 IQLExpressionRef IQLBuildVariable(IQLTreeFactoryRef ctxtRef,
 				  const char * text,
+				  const char * text2,
 				  int line, int column)
 {
   DynamicRecordContext & ctxt(*unwrap(ctxtRef));
-  return wrap(VariableExpr::create(ctxt, text, SourceLocation(line, column)));  
+  return wrap(VariableExpr::create(ctxt, text, text2, SourceLocation(line, column)));  
 }
 
 IQLExpressionRef IQLBuildArrayRef(IQLTreeFactoryRef ctxtRef,

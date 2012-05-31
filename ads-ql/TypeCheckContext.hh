@@ -38,44 +38,122 @@
 #include <map>
 #include <stack>
 #include <string>
-#include "LLVMGen.h"
-#include "RecordType.hh"
+#include <boost/dynamic_bitset.hpp>
 
-typedef struct IQLRecordMapStruct * IQLRecordMapRef;
-typedef struct IQLToFieldTypeStruct * IQLSymbolTableRef;
+class FieldType;
+class IQLToLLVMLValue;
+class RecordType;
+class RecordMemberList;
+
+class AliasedRecordType
+{
+private:
+  std::string mAlias;
+  const RecordType * mType;
+public:
+  // Compiler generated copy c'tor and assignment OK.
+  AliasedRecordType(const std::string& alias, const RecordType * ty)
+    :
+    mAlias(alias),
+    mType(ty)
+  {
+  }
+  ~AliasedRecordType()
+  {
+  }
+  const std::string& getAlias() const { return mAlias; }
+  const RecordType * getType() const { return mType; }
+};
+
+class TreculSymbolTableEntry
+{
+private:
+  const FieldType * mType;
+  IQLToLLVMLValue * mValue;
+public:
+  TreculSymbolTableEntry();
+  TreculSymbolTableEntry(const FieldType * ft);
+  TreculSymbolTableEntry(IQLToLLVMLValue * val);
+  TreculSymbolTableEntry(const FieldType * ft, IQLToLLVMLValue * val);
+  ~TreculSymbolTableEntry();
+  const FieldType * getType() const;
+  IQLToLLVMLValue * getValue() const;
+};
+
+/**
+ * The symbol table allows for two part names of variables with an optional 
+ * prefix.  If a variable name is unique without its prefix then it may be referenced
+ * without it, otherwise there is an ambiguous reference.  In all cases it is 
+ * permissible to reference a field with its fully qualified name.
+ */
+class TreculSymbolTable
+{
+public:
+  typedef std::map<std::string, TreculSymbolTableEntry *>::iterator table_iterator;
+  typedef std::map<std::string, TreculSymbolTableEntry *>::const_iterator table_const_iterator;
+private:
+  // Lookup by two part name.
+  std::map<std::string, TreculSymbolTableEntry *> mNameLookup;
+  // Lookup by unprefixed name. 
+  std::map<std::string, TreculSymbolTableEntry *> mUnprefixedNameLookup;
+  // Sentinel value for detecting ambiguous unprefixed names.
+  TreculSymbolTableEntry mAmbiguous;
+public:
+  TreculSymbolTable();
+  ~TreculSymbolTable();
+  void clear();  
+  TreculSymbolTableEntry * lookup(const char * nm, const char * nm2);
+  void add(const char * nm, const char * nm2, const FieldType * ft);
+  void add(const char * nm, const char * nm2, IQLToLLVMLValue * val);
+  void add(const char * nm, const char * nm2, 
+	   const FieldType * ft, IQLToLLVMLValue * val);
+  bool contains(const char * nm, const char * nm2) const;
+};
 
 class TypeCheckContext 
 {
 private:
-  typedef std::map<std::string, IQLFieldTypeRef> symbol_table;
-
   std::map<std::string, const RecordType *> mInputRecords;
-  std::map<std::string, IQLFieldTypeRef> mSymbolTable;
-  std::map<std::string, IQLFieldTypeRef> mAggregateTable;
-  std::stack<IQLFieldTypeRef> mCaseType;
+  TreculSymbolTable mSymbolTable;
+  TreculSymbolTable mAggregateTable;
+  std::stack<const FieldType *> mCaseType;
 public:
-  typedef std::vector<RecordMember> member_list;
+  typedef RecordMemberList member_list;
   class DynamicRecordContext& mContext;
-  IQLRecordMapRef IQLInputRecords;
 private:
   const RecordType * mOutputRecord;
-public:
-  IQLSymbolTableRef TypeCheckSymbolTable;
-private:
-  IQLSymbolTableRef mAggregateTypeCheckSymbolTable;
-  IQLSymbolTableRef mSaveTypeCheckSymbolTable;
+  TreculSymbolTable * mTypeCheckSymbolTable;
+  TreculSymbolTable * mAggregateTypeCheckSymbolTable;
+  TreculSymbolTable * mSaveTypeCheckSymbolTable;
   member_list * mRecordMembers;
 
   // One member per aggregate function.
-  member_list mAggregateMembers;
+  member_list * mAggregateMembers;
   // A record where aggregate functions
   // can be calculated.
   const RecordType * mAggregateRecord;
 
   bool isBuiltinFunction(const char * name);
 
+  void init(const std::vector<AliasedRecordType>& sources,
+	    const std::vector<boost::dynamic_bitset<> >& masks);
+
 public:
   TypeCheckContext(class DynamicRecordContext & recCtxt);
+
+  /**
+   * Initialize type check context with a list of 
+   * named Trecul record types (structs).
+   * mask arguments indicate which fields of each input struct
+   * to include in the environment.
+   */
+  TypeCheckContext(DynamicRecordContext & recCtxt,
+		   const std::vector<AliasedRecordType>& sources);
+
+  TypeCheckContext(DynamicRecordContext & recCtxt,
+		   const std::vector<AliasedRecordType>& sources,
+		   const std::vector<boost::dynamic_bitset<> >& masks);
+		   
   /**
    * Initialize type check of aggregate functions.
    * When type checking the parameters of an aggregate
@@ -103,14 +181,7 @@ public:
    * Retrieve the record where aggregate functions
    * may be built.
    */
-  const RecordType * getAggregateRecord() 
-  {
-    if (mAggregateTypeCheckSymbolTable != NULL &&
-	mAggregateRecord == NULL) {
-      mAggregateRecord = new RecordType(mAggregateMembers);
-    }
-    return mAggregateRecord;
-  }
+  const RecordType * getAggregateRecord();
 
   /**
    * Set value statement
@@ -122,6 +193,18 @@ public:
    * Switch statements
    */
   void beginSwitch(const FieldType * e);
+
+  /**
+   * Variable rvalue expression.
+   * Variable names have an optional two part form.
+   * If there is only one part then the argument nm2 may be NULL.
+   */
+  const FieldType * buildVariableRef(const char * nm, const char * nm2);
+
+  /**
+   * Declare local variable.
+   */
+  void buildLocal(const char * nm, const FieldType * ft);
 
   /**
    * Array reference expression.
@@ -213,40 +296,10 @@ public:
 
   const FieldType * leastCommonTypeNullable(const FieldType * e1, 
 					    const FieldType * e2);
+
+  // Lookup a symbol
+  const FieldType * lookupType(const char * nm, const char * nm2);
 };
 
-// Symbol Table management 
-// TODO: Get rid of this C interface
-IQLSymbolTableRef IQLSymbolTableCreate();
-void IQLSymbolTableFree(IQLSymbolTableRef symTable);
-void IQLSymbolTableClear(IQLSymbolTableRef symTable);
-void IQLSymbolTableAdd(IQLSymbolTableRef symTable, const char * name, IQLFieldTypeRef value);
-IQLFieldTypeRef IQLSymbolTableLookup(IQLSymbolTableRef symTable, const char * name);
-
-class IQLTypeCheckBinaryConversion
-{
-public:
-  /**
-   * Can e1 be cast to e2?
-   */
-  static IQLFieldTypeRef castTo(TypeCheckContext * tctxt, IQLFieldTypeRef lhs, IQLFieldTypeRef rhs)
-  {
-    return wrap(tctxt->castTo(unwrap(lhs), unwrap(rhs)));
-  }
-  /**
-   * Can e1 be cast to e2 or vice versa?
-   */
-  static IQLFieldTypeRef leastCommonType(TypeCheckContext * ctxt, IQLFieldTypeRef e1, IQLFieldTypeRef e2)
-  {
-    return wrap(ctxt->leastCommonType(unwrap(e1), unwrap(e2)));
-  }
-  /**
-   * Can e1 be cast to e2 or vice versa?
-   */
-  static IQLFieldTypeRef leastCommonTypeNullable(TypeCheckContext * ctxt, IQLFieldTypeRef e1, IQLFieldTypeRef e2)
-  {
-    return wrap(ctxt->leastCommonTypeNullable(unwrap(e1), unwrap(e2)));
-  }
-};
 
 #endif

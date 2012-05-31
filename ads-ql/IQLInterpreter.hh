@@ -51,6 +51,7 @@ extern "C" {
 }
 
 #include "RecordType.hh"
+#include "TypeCheckContext.hh"
 
 // Forward decl
 class CodeGenerationContext;
@@ -546,26 +547,6 @@ public:
   IQLTransferModule * create(bool isPIC=false) const;
 };
 
-class AliasedRecordType
-{
-private:
-  std::string mAlias;
-  const RecordType * mType;
-public:
-  // Compiler generated copy c'tor and assignment OK.
-  AliasedRecordType(const std::string& alias, const RecordType * ty)
-    :
-    mAlias(alias),
-    mType(ty)
-  {
-  }
-  ~AliasedRecordType()
-  {
-  }
-  const std::string& getAlias() const { return mAlias; }
-  const RecordType * getType() const { return mType; }
-};
-
 class IQLTransferModule2
 {
 private:
@@ -765,13 +746,15 @@ public:
   // TODO: change this to support more than two inputs (using char** presumably)
   typedef void (*LLVMFuncType)(char*, char*, int32_t *, class InterpreterContext *);
 private:
-  std::vector<const RecordType *> mSources;
+  std::vector<AliasedRecordType> mSources;
   std::string mFunName;
   std::string mStatements;
   std::vector<unsigned char> mBitcode;
 
   LLVMFuncType mFunction;
   class IQLRecordBufferMethodHandle * mImpl;
+
+  void init(class DynamicRecordContext& recCtxt);
 public:
   /**
    * Get abstract syntax tree.
@@ -782,13 +765,16 @@ public:
   /**
    * Compile an expression against a set of input sources.
    * Right now this will throw if there are any name collisions among
-   * the inputs.  TODO: Support aliasing or multi-part names to disambiguate.
+   * the inputs.  
    */
   RecordTypeFunction(class DynamicRecordContext& recCtxt, 
-		     const std::string & funName, 
-		     const std::vector<const RecordType *> sources, 
-		     const std::string& statements,
-		     const std::vector<std::string> * prefixes = NULL);
+  		     const std::string & funName, 
+  		     const std::vector<const RecordType *> sources, 
+  		     const std::string& statements);
+  RecordTypeFunction(class DynamicRecordContext& recCtxt, 
+  		     const std::string & funName, 
+  		     const std::vector<AliasedRecordType>& sources, 
+  		     const std::string& statements);
 
   ~RecordTypeFunction();
 

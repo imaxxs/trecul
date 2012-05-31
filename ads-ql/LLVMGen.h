@@ -252,7 +252,7 @@ extern "C" {
 					       const char * var,
 					       IQLToLLVMValueRef idx);
 
-  IQLToLLVMValueRef IQLToLLVMBuildVariableRef(IQLCodeGenerationContextRef ctxt, const char * var);
+  IQLToLLVMValueRef IQLToLLVMBuildVariableRef(IQLCodeGenerationContextRef ctxt, const char * var, const char * var2);
   IQLToLLVMValueRef IQLToLLVMBuildArrayRef(IQLCodeGenerationContextRef ctxt, 
 					   const char * var,
 					   IQLToLLVMValueRef idx);
@@ -402,6 +402,13 @@ extern "C" {
   IQLFieldTypeRef IQLTypeCheckArrayRef(IQLTypeCheckContextRef ctxt, 
 				       const char * nm,
 				       IQLFieldTypeRef idx);
+
+  /**
+   * Get the type of an variable (possibly qualified).
+   */
+  IQLFieldTypeRef IQLTypeCheckBuildVariableRef(IQLTypeCheckContextRef ctxt, 
+					       const char * nm,
+					       const char * nm2);
 
   /**
    * Get the type of an array variable.

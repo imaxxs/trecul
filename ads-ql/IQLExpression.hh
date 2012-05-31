@@ -1021,14 +1021,16 @@ private:
 public:
 
   VariableExpr(DynamicRecordContext & ctxt, 
-	    const char * text,
-	    const SourceLocation& loc);
+	       const char * text,
+	       const char * text2,
+	       const SourceLocation& loc);
 
   static VariableExpr * create(DynamicRecordContext & ctxt,
-			    const char * text,
-			    const SourceLocation& loc)
+			       const char * text,
+			       const char * text2,
+			       const SourceLocation& loc)
   {
-    VariableExpr * tmp = new VariableExpr(ctxt, text, loc);
+    VariableExpr * tmp = new VariableExpr(ctxt, text, text2, loc);
     ctxt.add(tmp);
     return tmp;
   }

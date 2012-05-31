@@ -233,6 +233,32 @@ IQLCodeGenerationContextRef wrap(class CodeGenerationContext * ctxt)
   return reinterpret_cast<IQLCodeGenerationContextRef> (ctxt);
 }
 
+class IQLTypeCheckBinaryConversion
+{
+public:
+  /**
+   * Can e1 be cast to e2?
+   */
+  static IQLFieldTypeRef castTo(TypeCheckContext * tctxt, IQLFieldTypeRef lhs, IQLFieldTypeRef rhs)
+  {
+    return wrap(tctxt->castTo(unwrap(lhs), unwrap(rhs)));
+  }
+  /**
+   * Can e1 be cast to e2 or vice versa?
+   */
+  static IQLFieldTypeRef leastCommonType(TypeCheckContext * ctxt, IQLFieldTypeRef e1, IQLFieldTypeRef e2)
+  {
+    return wrap(ctxt->leastCommonType(unwrap(e1), unwrap(e2)));
+  }
+  /**
+   * Can e1 be cast to e2 or vice versa?
+   */
+  static IQLFieldTypeRef leastCommonTypeNullable(TypeCheckContext * ctxt, IQLFieldTypeRef e1, IQLFieldTypeRef e2)
+  {
+    return wrap(ctxt->leastCommonTypeNullable(unwrap(e1), unwrap(e2)));
+  }
+};
+
 class IQLToLLVMTypePredicate
 {
 public:
@@ -764,10 +790,10 @@ void IQLToLLVMCallMemcpy(CodeGenerationContext * ctxt,
 			 int64_t sz)
 {
     LLVMValueRef sourcePtr = LLVMBuildLoad(ctxt->LLVMBuilder,
-					   ctxt->lookupValue(sourceArg.c_str())->getValue(),
+					   ctxt->lookupBasePointer(sourceArg.c_str())->getValue(),
 					   "srccpy");	
     LLVMValueRef targetPtr = LLVMBuildLoad(ctxt->LLVMBuilder,
-					   ctxt->lookupValue(targetArg.c_str())->getValue(),
+					   ctxt->lookupBasePointer(targetArg.c_str())->getValue(),
 					   "tgtcpy");
     IQLToLLVMCallMemcpy(ctxt, sourcePtr, sourceOffset,
 			targetPtr, targetOffset, sz);
@@ -2468,7 +2494,7 @@ void IQLToLLVMBuildReturnValue(IQLCodeGenerationContextRef ctxtRef, IQLToLLVMVal
   // Due to our uniform implementation of mutable variables, our return location is actually
   // a pointer to a pointer.
   LLVMValueRef loc = LLVMBuildLoad(ctxt->LLVMBuilder, 
-				   ctxt->lookupValue("__ReturnValue__")->getValue(),
+				   ctxt->lookupValue("__ReturnValue__", NULL)->getValue(),
 				   "retloc");
 
   LLVMValueRef llvmVal = unwrap(iqlVal)->getValue();
@@ -2540,12 +2566,14 @@ IQLToLLVMValueRef IQLToLLVMBuildRef(CodeGenerationContext * ctxt, IQLToLLVMValue
   }
 }
 
-IQLToLLVMValueRef IQLToLLVMBuildVariableRef(IQLCodeGenerationContextRef ctxtRef, const char * var) 
+IQLToLLVMValueRef IQLToLLVMBuildVariableRef(IQLCodeGenerationContextRef ctxtRef, 
+					    const char * var,
+					    const char * var2) 
 {
   CodeGenerationContext * ctxt = unwrap(ctxtRef);
   /* Lookup value in symbol table */
   /* TODO: Handle undefined reference */
-  const IQLToLLVMValue * allocAVal = ctxt->lookupValue(var);
+  const IQLToLLVMValue * allocAVal = ctxt->lookupValue(var, var2);
   return IQLToLLVMBuildRef (ctxt, wrap(allocAVal));
 }
 
@@ -2670,7 +2698,7 @@ IQLToLLVMLValueRef IQLToLLVMBuildLValue(IQLCodeGenerationContextRef ctxtRef,
 					const char * var)
 {
   CodeGenerationContext * ctxt = unwrap(ctxtRef);
-  return wrap(ctxt->lookup(var));
+  return wrap(ctxt->lookup(var, NULL));
 }
 
 IQLToLLVMLValueRef IQLToLLVMBuildArrayLValue(IQLCodeGenerationContextRef ctxtRef, 
@@ -2682,7 +2710,7 @@ IQLToLLVMLValueRef IQLToLLVMBuildArrayLValue(IQLCodeGenerationContextRef ctxtRef
   llvm::LLVMContext * c = llvm::unwrap(ctxt->LLVMContext);
   llvm::IRBuilder<> * b = llvm::unwrap(ctxt->LLVMBuilder);
   llvm::Function *f = b->GetInsertBlock()->getParent();
-  const IQLToLLVMValue * lvalue = ctxt->lookupValue(var);
+  const IQLToLLVMValue * lvalue = ctxt->lookupValue(var, NULL);
   llvm::Value * lval = llvm::unwrap(lvalue->getValue());
 
   // Convert index to int64
@@ -3183,7 +3211,7 @@ void NullInitializedAggregate::update(CodeGenerationContext * ctxt,
     llvm::BasicBlock::Create(*c, "aggNotNull", TheFunction);
   llvm::BasicBlock * nullBlock = 
     llvm::BasicBlock::Create(*c, "aggNull", TheFunction);
-  IQLToLLVMValueRef old = IQLToLLVMBuildVariableRef(wrap(ctxt), aggFn.c_str());
+  IQLToLLVMValueRef old = IQLToLLVMBuildVariableRef(wrap(ctxt), aggFn.c_str(), NULL);
   BOOST_ASSERT(unwrap(old)->getNull());
   b->CreateCondBr(b->CreateNot(unwrap(old)->getNull()), notNullBlock, nullBlock);
   // Increment value not null case
@@ -3258,7 +3286,7 @@ void SumAggregate::updateNotNull(CodeGenerationContext * ctxt,
   					    inc,
   					    (void *) inputTy,
   					    IQLToLLVMBuildVariableRef(wrap(ctxt), 
-								      aggFn.c_str()),
+								      aggFn.c_str(), NULL),
   					    (void *) ft,
   					    (void *) ft);
    IQLToLLVMBuildSetNullableValue(ctxt,
@@ -3324,7 +3352,7 @@ void MaxMinAggregate::updateNotNull(CodeGenerationContext * ctxt,
   llvm::BasicBlock * updateBlock = 
     llvm::BasicBlock::Create(*c, "then", TheFunction);
 
-  IQLToLLVMValueRef old = IQLToLLVMBuildVariableRef(wrap(ctxt), aggFn.c_str());
+  IQLToLLVMValueRef old = IQLToLLVMBuildVariableRef(wrap(ctxt), aggFn.c_str(), NULL);
   IQLToLLVMValueRef condVal = IQLToLLVMBuildCompare(wrap(ctxt), 
 						    old, (void *) ft, 
 						    inc, (void *) inputTy,
@@ -3387,7 +3415,7 @@ IQLToLLVMValueRef IQLToLLVMBuildAggregateFunction(IQLCodeGenerationContextRef ct
   // aggregate variable corresponding to this aggregate function.
   ctxt->restoreAggregateContext(&ctxt->Transfer);
 
-  return IQLToLLVMBuildVariableRef(ctxtRef, aggFn.c_str());
+  return IQLToLLVMBuildVariableRef(ctxtRef, aggFn.c_str(), NULL);
 }
 
 IQLToLLVMValueRef IQLToLLVMBuildIntervalDay(CodeGenerationContext * ctxt,
@@ -3751,7 +3779,7 @@ void LLVMSetField(IQLCodeGenerationContextRef ctxtRef,
 	llvmVal = load->getOperand(0);
       }
       FieldAddress inputAddress;
-      llvm::Value * inputBase = llvm::unwrap(ctxt->lookupValue(inputArg.c_str())->getValue());
+      llvm::Value * inputBase = llvm::unwrap(ctxt->lookupBasePointer(inputArg.c_str())->getValue());
       if (!inputType->isMemberPointer(llvmVal, inputBase, inputAddress) ||
 	  inputAddress != outputAddress) {    
 	ctxt->IsIdentity = false;
@@ -3849,10 +3877,10 @@ static void LLVMSetFieldsRegex(CodeGenerationContext * ctxt,
 			       int * pos)
 {
   LLVMValueRef sourcePtr = LLVMBuildLoad(ctxt->LLVMBuilder,
-					 ctxt->lookupValue(sourceName.c_str())->getValue(),
+					 ctxt->lookupBasePointer(sourceName.c_str())->getValue(),
 					 "srccpy");	
   LLVMValueRef targetPtr = LLVMBuildLoad(ctxt->LLVMBuilder,
-					 ctxt->lookupValue("__OutputPointer__")->getValue(),
+					 ctxt->lookupBasePointer("__OutputPointer__")->getValue(),
 					 "tgtcpy");
 			       
   RecordTypeCopy c(sourceType,
@@ -3892,7 +3920,7 @@ static void LLVMSetFieldsRegex(CodeGenerationContext * ctxt,
     int tmp=fit->second;
     LLVMSetField(wrap(ctxt),
 		 &tmp, 
-		 IQLToLLVMBuildVariableRef(wrap(ctxt), fit->first.c_str()));
+		 IQLToLLVMBuildVariableRef(wrap(ctxt), fit->first.c_str(), NULL));
   }
 }
 
@@ -3940,7 +3968,7 @@ void LLVMSetFields(IQLCodeGenerationContextRef ctxtRef,
 	++opit) {
       IQLToLLVMCallMemset(ctxt,
 			  LLVMBuildLoad(ctxt->LLVMBuilder,
-					ctxt->lookupValue(it->second.first.c_str())->getValue(),
+					ctxt->lookupBasePointer(it->second.first.c_str())->getValue(),
 					"srccpy"),
 			  opit->mSourceOffset,
 			  0,
@@ -3961,7 +3989,7 @@ void LLVMSetFields(IQLCodeGenerationContextRef ctxtRef,
       std::string memberName = out->GetMember(*pos).GetName();
       out->LLVMMemberGetPointer(memberName, 
 				ctxt, 
-				llvm::unwrap(ctxt->lookupValue("__OutputPointer__")->getValue()),
+				llvm::unwrap(ctxt->lookupBasePointer("__OutputPointer__")->getValue()),
 				false
 				);
 
@@ -4082,8 +4110,7 @@ void IQLTypeCheckBuildRecord(IQLTypeCheckContextRef ctxtRef)
 void IQLTypeCheckBuildLocal(IQLTypeCheckContextRef ctxtRef, const char * name, IQLFieldTypeRef ty)
 {
   TypeCheckContext * ctxt = unwrap(ctxtRef);
-  // Add to the symbol table.
-  IQLSymbolTableAdd(ctxt->TypeCheckSymbolTable, name, ty);
+  ctxt->buildLocal(name, unwrap(ty));
 }
 
 void IQLTypeCheckSetValue2(IQLTypeCheckContextRef ctxt, 
@@ -4098,6 +4125,13 @@ IQLFieldTypeRef IQLTypeCheckArrayRef(IQLTypeCheckContextRef ctxt,
 				     IQLFieldTypeRef idx)
 {
   return wrap(unwrap(ctxt)->buildArrayRef(nm, unwrap(idx)));
+}
+
+IQLFieldTypeRef IQLTypeCheckBuildVariableRef(IQLTypeCheckContextRef ctxt, 
+					     const char * nm,
+					     const char * nm2)
+{
+  return wrap(unwrap(ctxt)->buildVariableRef(nm, nm2));
 }
 
 void IQLTypeCheckBeginSwitch(IQLTypeCheckContextRef ctxt, 
@@ -4484,7 +4518,7 @@ IQLFieldTypeRef IQLTypeCheckArray(IQLTypeCheckContextRef ctxtRef, IQLFieldTypeVe
 IQLFieldTypeRef IQLTypeCheckSymbolTableGetType(IQLTypeCheckContextRef ctxtRef, const char * name)
 {
   TypeCheckContext * ctxt = unwrap(ctxtRef);
-  return IQLSymbolTableLookup(ctxt->TypeCheckSymbolTable, name);
+  return wrap(ctxt->lookupType(name, NULL));
 }
 
 void IQLGraphNodeStart(IQLGraphContextRef ctxt, const char * type, const char * name)

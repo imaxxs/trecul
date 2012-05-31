@@ -233,7 +233,7 @@ expression[IQLCodeGenerationContextRef ctxt] returns [IQLToLLVMValueRef llvmVal,
 	| WSTRING_LITERAL { IQLToLLVMNotImplemented(); }
 	| TK_TRUE { $llvmVal = IQLToLLVMBuildTrue($ctxt); }
 	| TK_FALSE { $llvmVal = IQLToLLVMBuildFalse($ctxt); }
-	| ^(id=ID ID?) { $llvmVal = IQLToLLVMBuildVariableRef($ctxt, (char *) $id.text->chars); }
+	| ^(id=ID (fun=ID {isBinary=1;})?) { $llvmVal = IQLToLLVMBuildVariableRef($ctxt, (const char *) $id.text->chars, isBinary ? (const char *) $fun.text->chars : 0); }
 	| ^('[' id=ID e1 = expression[$ctxt]) { $llvmVal = IQLToLLVMBuildArrayRef($ctxt, (char *) $id.text->chars, e1.llvmVal); }
     | TK_NULL { $llvmVal = IQLToLLVMBuildNull($ctxt); }
     | ^(c=TK_SUM { IQLToLLVMBeginAggregateFunction($ctxt); } e1 = expression[$ctxt] { $llvmVal = IQLToLLVMBuildAggregateFunction($ctxt, (char *) $TK_SUM.text->chars, e1.llvmVal, $c->u); } )

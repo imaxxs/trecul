@@ -1,0 +1,18 @@
+/**
+ * A simple one to many inner join.  Many side in the table.  Different but
+ * implicitly castable data types.  Test use of same join field name in 
+ * probe and table with residual.
+ */
+g1 = generate[output="RECORDCOUNT/2 AS a, RECORDCOUNT AS b", numRecords=14];
+
+g2 = generate[output="CAST(RECORDCOUNT AS INTEGER) AS a, RECORDCOUNT AS b", numRecords=10];
+
+j = merge_join[leftKey="a", rightKey="a", where="r.b = 2 OR l.b > 8", output="l.a AS a, r.a AS b, l.b AS c, r.b AS d"];
+g1 -> j;
+g2 -> j;
+
+p = sort[key="a", key="b"];
+j -> p;
+
+d = write[file="output.txt", mode="text"];
+p -> d;
