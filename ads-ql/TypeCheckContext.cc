@@ -625,6 +625,17 @@ const FieldType * TypeCheckContext::buildArrayRef(const char * nm,
   }
 }
 
+const FieldType * TypeCheckContext::buildAdd(const FieldType * lhs,
+					     const FieldType * rhs)
+{
+  bool nullable = lhs->isNullable() || rhs->isNullable();
+  if (rhs->GetEnum() == FieldType::DATE) {
+    std::swap(lhs, rhs);
+  }
+  const IntervalType * it = static_cast<const IntervalType *>(rhs);
+  return it->getDateResultType(mContext, nullable);  
+}
+
 const FieldType * TypeCheckContext::buildModulus(const FieldType * lhs,
 						 const FieldType * rhs)
 {

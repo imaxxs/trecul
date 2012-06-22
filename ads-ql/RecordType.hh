@@ -829,6 +829,13 @@ public:
   { 
     return mIntervalUnit; 
   }
+
+  /**
+   * When added to a date type what is the result type?
+   */
+  const FieldType * getDateResultType(DynamicRecordContext& ctxt, 
+				      bool nullable) const;
+
   /**
    * Append my state to an md5 hash
    */

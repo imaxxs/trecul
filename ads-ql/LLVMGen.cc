@@ -2031,19 +2031,25 @@ IQLToLLVMValue::ValueType IQLToLLVMBuildDateAdd(CodeGenerationContext * ctxt,
   if (lhsType != NULL && lhsType->GetEnum() == FieldType::INTERVAL) {
     std::swap(e1, e2);
     std::swap(lhs, rhs);
+    std::swap(lhsType, rhsType);
   }
   // BOOST_ASSERT(LLVMTypeOf(e1) == LLVMDoubleTypeInContext(ctxt->LLVMContext));
   const IntervalType * intervalType = dynamic_cast<const IntervalType *>(rhsType);
   IntervalType::IntervalUnit unit = intervalType->getIntervalUnit();
   LLVMValueRef callArgs[2];
+  static const char * types [] = {"datetime", "date"};
+  const char * ty = 
+    lhsType->GetEnum() == FieldType::DATETIME ? types[0] : types[1];
+  std::string 
+    fnName((boost::format(
+			  unit == IntervalType::DAY ? "%1%_add_day" : 
+			  unit == IntervalType::HOUR ? "%1%_add_hour" :
+			  unit == IntervalType::MINUTE ? "%1%_add_minute" :
+			  unit == IntervalType::MONTH ? "%1%_add_month" :
+			  unit == IntervalType::SECOND ? "%1%_add_second" :
+			  "%1%_add_year") % ty).str());
   LLVMValueRef fn = 
-    LLVMGetNamedFunction(ctxt->LLVMModule, 
-			 unit == IntervalType::DAY ? "datetime_add_day" : 
-			 unit == IntervalType::HOUR ? "datetime_add_hour" :
-			 unit == IntervalType::MINUTE ? "datetime_add_minute" :
-			 unit == IntervalType::MONTH ? "datetime_add_month" :
-			 unit == IntervalType::SECOND ? "datetime_add_second" :
-			 "datetime_add_year");
+    LLVMGetNamedFunction(ctxt->LLVMModule, fnName.c_str());
   callArgs[0] = unwrap(lhs)->getValue();
   callArgs[1] = unwrap(rhs)->getValue();
   LLVMValueRef ret = LLVMBuildCall(ctxt->LLVMBuilder, fn, &callArgs[0], 2, "");
@@ -4149,6 +4155,7 @@ IQLFieldTypeRef IQLTypeCheckModulus(IQLTypeCheckContextRef ctxt,
 
 IQLFieldTypeRef IQLTypeCheckAdditiveType(IQLTypeCheckContextRef ctxtRef, IQLFieldTypeRef lhs, IQLFieldTypeRef rhs)
 {
+  // TODO: Move this code into TypeCheckContext
   TypeCheckContext * ctxt = unwrap(ctxtRef);
   // Special case handling of datetime/interval
   const FieldType * lhsTy = unwrap(lhs);
@@ -4157,6 +4164,10 @@ IQLFieldTypeRef IQLTypeCheckAdditiveType(IQLTypeCheckContextRef ctxtRef, IQLFiel
   if ((lhsTy->GetEnum() == FieldType::INTERVAL && rhsTy->GetEnum()==FieldType::DATETIME) ||
       (rhsTy->GetEnum() == FieldType::INTERVAL && lhsTy->GetEnum()==FieldType::DATETIME)) {
     return wrap(ctxt->buildDatetimeType(nullable));
+  } else if ((lhsTy->GetEnum() == FieldType::INTERVAL && rhsTy->GetEnum()==FieldType::DATE) ||
+      (rhsTy->GetEnum() == FieldType::INTERVAL && lhsTy->GetEnum()==FieldType::DATE)) {
+    
+    return wrap(ctxt->buildAdd(lhsTy, rhsTy));
   } else if (lhsTy->GetEnum() == FieldType::CHAR && rhsTy->GetEnum()==FieldType::CHAR) {
     std::string retSz = boost::lexical_cast<std::string>(lhsTy->GetSize() + 
 							 rhsTy->GetSize());

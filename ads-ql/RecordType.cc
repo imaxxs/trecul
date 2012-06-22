@@ -833,6 +833,21 @@ FixedArrayType::~FixedArrayType()
 {
 }
 
+const FieldType * IntervalType::getDateResultType(DynamicRecordContext& ctxt, 
+						  bool nullable) const
+{
+  switch(mIntervalUnit) {
+  case DAY:
+  case MONTH:
+  case YEAR:
+    return DateType::Get(ctxt, nullable);
+  case HOUR:
+  case MINUTE:
+  case SECOND:
+    return DatetimeType::Get(ctxt, nullable);
+  }
+}
+
 void IntervalType::AppendTo(struct md5_state_s * md5) const
 {
   FieldType::AppendTo(md5);

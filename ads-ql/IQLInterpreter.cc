@@ -601,6 +601,36 @@ extern "C" boost::posix_time::ptime datetime_add_year(boost::posix_time::ptime t
   return t + boost::gregorian::years(units);
 }
 
+extern "C" boost::posix_time::ptime date_add_second(boost::gregorian::date t,
+						    int32_t units) {
+  return boost::posix_time::ptime(t, boost::posix_time::seconds(units));
+}
+
+extern "C" boost::posix_time::ptime date_add_hour(boost::gregorian::date t,
+						  int32_t units) {
+  return boost::posix_time::ptime(t, boost::posix_time::hours(units));
+}
+
+extern "C" boost::posix_time::ptime date_add_minute(boost::gregorian::date t,
+						    int32_t units) {
+  return boost::posix_time::ptime(t, boost::posix_time::minutes(units));
+}
+
+extern "C" boost::gregorian::date date_add_day(boost::gregorian::date t,
+					       int32_t units) {
+  return t + boost::gregorian::days(units);
+}
+
+extern "C" boost::gregorian::date date_add_month(boost::gregorian::date t,
+						 int32_t units) {
+  return t + boost::gregorian::months(units);
+}
+
+extern "C" boost::gregorian::date date_add_year(boost::gregorian::date t,
+						int32_t units) {
+  return t + boost::gregorian::years(units);
+}
+
 extern "C" void InternalArrayException() {
   throw std::runtime_error("Array Bounds Exception");
 }
@@ -1209,6 +1239,42 @@ void LLVMBase::InitializeLLVM()
   argumentTypes[numArguments++] = LLVMInt32TypeInContext(mContext->LLVMContext);
   funTy = LLVMFunctionType(LLVMInt64TypeInContext(mContext->LLVMContext), &argumentTypes[0], numArguments, 0);
   libFunVal = ::LoadAndValidateExternalFunction(*this, "datetime_add_hour", funTy);
+
+  numArguments = 0;
+  argumentTypes[numArguments++] = LLVMInt32TypeInContext(mContext->LLVMContext);
+  argumentTypes[numArguments++] = LLVMInt32TypeInContext(mContext->LLVMContext);
+  funTy = LLVMFunctionType(LLVMInt32TypeInContext(mContext->LLVMContext), &argumentTypes[0], numArguments, 0);
+  libFunVal = ::LoadAndValidateExternalFunction(*this, "date_add_day", funTy);
+
+  numArguments = 0;
+  argumentTypes[numArguments++] = LLVMInt32TypeInContext(mContext->LLVMContext);
+  argumentTypes[numArguments++] = LLVMInt32TypeInContext(mContext->LLVMContext);
+  funTy = LLVMFunctionType(LLVMInt32TypeInContext(mContext->LLVMContext), &argumentTypes[0], numArguments, 0);
+  libFunVal = ::LoadAndValidateExternalFunction(*this, "date_add_month", funTy);
+
+  numArguments = 0;
+  argumentTypes[numArguments++] = LLVMInt32TypeInContext(mContext->LLVMContext);
+  argumentTypes[numArguments++] = LLVMInt32TypeInContext(mContext->LLVMContext);
+  funTy = LLVMFunctionType(LLVMInt32TypeInContext(mContext->LLVMContext), &argumentTypes[0], numArguments, 0);
+  libFunVal = ::LoadAndValidateExternalFunction(*this, "date_add_year", funTy);
+
+  numArguments = 0;
+  argumentTypes[numArguments++] = LLVMInt32TypeInContext(mContext->LLVMContext);
+  argumentTypes[numArguments++] = LLVMInt32TypeInContext(mContext->LLVMContext);
+  funTy = LLVMFunctionType(LLVMInt64TypeInContext(mContext->LLVMContext), &argumentTypes[0], numArguments, 0);
+  libFunVal = ::LoadAndValidateExternalFunction(*this, "date_add_second", funTy);
+
+  numArguments = 0;
+  argumentTypes[numArguments++] = LLVMInt32TypeInContext(mContext->LLVMContext);
+  argumentTypes[numArguments++] = LLVMInt32TypeInContext(mContext->LLVMContext);
+  funTy = LLVMFunctionType(LLVMInt64TypeInContext(mContext->LLVMContext), &argumentTypes[0], numArguments, 0);
+  libFunVal = ::LoadAndValidateExternalFunction(*this, "date_add_minute", funTy);
+
+  numArguments = 0;
+  argumentTypes[numArguments++] = LLVMInt32TypeInContext(mContext->LLVMContext);
+  argumentTypes[numArguments++] = LLVMInt32TypeInContext(mContext->LLVMContext);
+  funTy = LLVMFunctionType(LLVMInt64TypeInContext(mContext->LLVMContext), &argumentTypes[0], numArguments, 0);
+  libFunVal = ::LoadAndValidateExternalFunction(*this, "date_add_hour", funTy);
 
   numArguments = 0;
   argumentTypes[numArguments++] = LLVMPointerType(LLVMInt8TypeInContext(mContext->LLVMContext), 0);

@@ -3521,6 +3521,7 @@ BOOST_AUTO_TEST_CASE(testIQLIntervalTypes)
 			", a + INTERVAL 86402 SECOND AS l"
 			", CAST('2011-01-01 23:33:17' AS DATETIME) + INTERVAL 15 DAY AS m"
 			", a + interval 86402 seCOND AS n"
+			", INTERVAL -5 YEAR + a AS o"
 			);
   
   // Actually execute this thing.  
@@ -3554,6 +3555,65 @@ BOOST_AUTO_TEST_CASE(testIQLIntervalTypes)
 		    t1.getTarget()->getFieldAddress("m").getDatetime(outputBuf));
   BOOST_CHECK_EQUAL(boost::posix_time::time_from_string("2011-02-18 15:38:35"),
 		    t1.getTarget()->getFieldAddress("n").getDatetime(outputBuf));
+  BOOST_CHECK_EQUAL(boost::posix_time::time_from_string("2006-02-17 15:38:33"),
+		    t1.getTarget()->getFieldAddress("o").getDatetime(outputBuf));
+}
+
+BOOST_AUTO_TEST_CASE(testIQLIntervalTypesDate)
+{
+  DynamicRecordContext ctxt;
+  std::vector<RecordMember> members;
+  members.push_back(RecordMember("a", DateType::Get(ctxt)));
+  boost::shared_ptr<RecordType> recordType(new RecordType(members));
+  
+  // Simple Transfer of everything
+  RecordTypeTransfer t1(ctxt, "xfer1", recordType.get(), 
+			"a "
+			", a + INTERVAL 72 SECOND AS d"
+			", a + INTERVAL 5 DAY AS e"
+			", a + INTERVAL 2 MINUTE AS f"
+			", a + INTERVAL 4 HOUR AS g"
+			", a + INTERVAL 2 MONTH AS h"
+			", a + INTERVAL 5 YEAR AS i"
+			", a + INTERVAL -2 DAY AS j"
+			", a + INTERVAL -48 HOUR AS k"
+			", a + INTERVAL 86402 SECOND AS l"
+			", CAST('2011-01-01' AS DATE) + INTERVAL 15 DAY AS m"
+			", a + interval 86402 seCOND AS n"
+			", INTERVAL -5 YEAR + a AS o"
+			);
+  
+  // Actually execute this thing.  
+  RecordBuffer inputBuf = recordType->GetMalloc()->malloc();
+  boost::gregorian::date dt = boost::gregorian::from_string("2011-02-17");
+  recordType->setDate("a", dt, inputBuf);
+  RecordBuffer outputBuf = t1.getTarget()->GetMalloc()->malloc();
+  InterpreterContext runtimeCtxt;
+  t1.execute(inputBuf, outputBuf, &runtimeCtxt, false);
+  BOOST_CHECK_EQUAL(boost::posix_time::time_from_string("2011-02-17 00:01:12"),
+		    t1.getTarget()->getFieldAddress("d").getDatetime(outputBuf));
+  BOOST_CHECK_EQUAL(boost::gregorian::from_string("2011-02-22"),
+		    t1.getTarget()->getFieldAddress("e").getDate(outputBuf));
+  BOOST_CHECK_EQUAL(boost::posix_time::time_from_string("2011-02-17 00:02:00"),
+		    t1.getTarget()->getFieldAddress("f").getDatetime(outputBuf));
+  BOOST_CHECK_EQUAL(boost::posix_time::time_from_string("2011-02-17 04:00:00"),
+		    t1.getTarget()->getFieldAddress("g").getDatetime(outputBuf));
+  BOOST_CHECK_EQUAL(boost::gregorian::from_string("2011-04-17"),
+		    t1.getTarget()->getFieldAddress("h").getDate(outputBuf));
+  BOOST_CHECK_EQUAL(boost::gregorian::from_string("2016-02-17"),
+		    t1.getTarget()->getFieldAddress("i").getDate(outputBuf));
+  BOOST_CHECK_EQUAL(boost::gregorian::from_string("2011-02-15"),
+		    t1.getTarget()->getFieldAddress("j").getDate(outputBuf));
+  BOOST_CHECK_EQUAL(boost::posix_time::time_from_string("2011-02-15 00:00:00"),
+		    t1.getTarget()->getFieldAddress("k").getDatetime(outputBuf));
+  BOOST_CHECK_EQUAL(boost::posix_time::time_from_string("2011-02-18 00:00:02"),
+		    t1.getTarget()->getFieldAddress("l").getDatetime(outputBuf));
+  BOOST_CHECK_EQUAL(boost::gregorian::from_string("2011-01-16"),
+		    t1.getTarget()->getFieldAddress("m").getDate(outputBuf));
+  BOOST_CHECK_EQUAL(boost::posix_time::time_from_string("2011-02-18 00:00:02"),
+		    t1.getTarget()->getFieldAddress("n").getDatetime(outputBuf));
+  BOOST_CHECK_EQUAL(boost::gregorian::from_string("2006-02-17"),
+		    t1.getTarget()->getFieldAddress("o").getDate(outputBuf));
 }
 
 BOOST_AUTO_TEST_CASE(testIQLRecordTransfer2Integers)
