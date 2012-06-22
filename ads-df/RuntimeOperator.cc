@@ -1110,7 +1110,7 @@ void LogicalGroupBy::check(PlanCheckContext& log)
       update.size() && 0==init.size()) {
     log.logError(*this, "either specify both initialize and update or output argument");
   }
-  
+
   std::vector<std::string> allGroupKeys;
   if (mSortGroupKeys.size()) {
     allGroupKeys.insert(allGroupKeys.end(), 
@@ -1141,6 +1141,11 @@ void LogicalGroupBy::check(PlanCheckContext& log)
 					 allGroupKeys,
 					 mIsRunningTotal);
   } else {
+    // Must specify output if non init/update
+    if (0 == mProgram.size()) {
+      log.logError(*this, "Must specify argument 'output'");
+    }
+  
     mAggregate = new RecordTypeAggregate(log,
 					 "hashAgg",
 					 getInput(0)->getRecordType(),
