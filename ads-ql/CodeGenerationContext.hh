@@ -457,6 +457,49 @@ public:
 				    const FieldType * arrayTy);
   const IQLToLLVMValue * buildGlobalConstArray(std::vector<const IQLToLLVMValue *>& vals,
 					       const FieldType * arrayTy);
+
+  /**
+   * Call a function.
+   */
+  IQLToLLVMValue::ValueType buildCall(const char * f,
+				      const std::vector<const IQLToLLVMValue *> & args,
+				      llvm::Value * retTmp,
+				      const FieldType * retType);
+  /**
+   * Cast non null value to INT32.  Put return value in ret.
+   */
+  IQLToLLVMValue::ValueType buildCastInt32(const IQLToLLVMValue * e, 
+					   const FieldType * argAttrs, 
+					   llvm::Value * ret, 
+					   const FieldType * retAttrs);
+
+  /**
+   * Cast non null value to INT64.  Put return value in ret.
+   */
+  IQLToLLVMValue::ValueType buildCastInt64(const IQLToLLVMValue * e, 
+					   const FieldType * argAttrs, 
+					   llvm::Value * ret, 
+					   const FieldType * retAttrs);
+
+  /**
+   * Subtract rhs from lhs.  Put return value in ret.
+   */
+  IQLToLLVMValue::ValueType buildSub(const IQLToLLVMValue * lhs, 
+				     const FieldType * lhsType, 
+				     const IQLToLLVMValue * rhs, 
+				     const FieldType * rhsType, 
+				     llvm::Value * ret, 
+				     const FieldType * retType);
+
+  /**
+   * Add INTERVAL and DATE/DATETIME.  Put return value in ret.
+   */
+  IQLToLLVMValue::ValueType buildDateAdd(const IQLToLLVMValue * lhs, 
+					 const FieldType * lhsType, 
+					 const IQLToLLVMValue * rhs, 
+					 const FieldType * rhsType, 
+					 llvm::Value * ret, 
+					 const FieldType * retType);
 };
 
 
@@ -487,4 +530,61 @@ void IQLToLLVMBuildSetNullableValue(CodeGenerationContext * ctxt,
 				    const IQLToLLVMLValue * lval,
 				    IQLToLLVMValueRef val,
 				    bool allowNullToNonNull);
+
+void IQLToLLVMVarcharSetSize(CodeGenerationContext * ctxt, LLVMValueRef varcharPtr, LLVMValueRef sz);
+void IQLToLLVMVarcharSetPtr(CodeGenerationContext * ctxt, LLVMValueRef varcharPtr, LLVMValueRef sz);
+
+class IQLToLLVMTypePredicate
+{
+public:
+  static bool isChar(LLVMTypeRef ty);
+  static bool isChar(LLVMValueRef val);
+  static bool isArrayType(LLVMTypeRef ty);
+  static bool isArrayType(LLVMValueRef val);
+};
+
+class IQLToLLVMBinaryConversion
+{
+private:
+  static IQLToLLVMValueRef convertIntToDec(CodeGenerationContext * ctxt,
+					   LLVMValueRef llvmVal,
+					   bool isInt64);
+
+public:
+  /**
+   * Can e1 be cast to e2?
+   */
+  static LLVMTypeRef castTo(CodeGenerationContext * ctxt, LLVMTypeRef e1, LLVMTypeRef e2);
+  /**
+   * Can e1 be cast to e2 or vice versa?
+   */
+  static LLVMTypeRef leastCommonType(CodeGenerationContext * ctxt, LLVMTypeRef e1, LLVMTypeRef e2);
+  /**
+   * Convert a value to the target type.
+   */
+  static IQLToLLVMValueRef convertTo(CodeGenerationContext * ctxt, 
+				     IQLToLLVMValueRef v, 
+				     const FieldType * ty);
+  static IQLToLLVMValueRef convertTo(CodeGenerationContext * ctxt, 
+				     IQLToLLVMValueRef v, 
+				     LLVMTypeRef e2);
+private:
+  IQLToLLVMValueRef mLHS;
+  IQLToLLVMValueRef mRHS;
+  LLVMTypeRef mResultType;
+public:
+  IQLToLLVMBinaryConversion(CodeGenerationContext * ctxt, IQLToLLVMValueRef lhs, IQLToLLVMValueRef rhs);
+
+  IQLToLLVMValueRef getLHS() { return mLHS; }
+  IQLToLLVMValueRef getRHS() { return mRHS; }
+  LLVMTypeRef getResultType() { return mResultType; }
+};
+
+class IQLToLLVMTypeInspector
+{
+public:
+  static int32_t getCharArrayLength(LLVMTypeRef ty);
+  static int32_t getCharArrayLength(LLVMValueRef val);
+};
+
 #endif

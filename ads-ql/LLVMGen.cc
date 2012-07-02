@@ -137,8 +137,6 @@ IQLToLLVMCreateBinaryDecimalCall(CodeGenerationContext * ctxt,
 void IQLToLLVMBuildSetValue(CodeGenerationContext * ctxt, 
 			    IQLToLLVMValueRef llvmVal, 
 			    const char * loc);
-void IQLToLLVMVarcharSetSize(CodeGenerationContext * ctxt, LLVMValueRef varcharPtr, LLVMValueRef sz);
-void IQLToLLVMVarcharSetPtr(CodeGenerationContext * ctxt, LLVMValueRef varcharPtr, LLVMValueRef sz);
 IQLToLLVMValueRef IQLToLLVMBuildCompare(CodeGenerationContext * ctxt, IQLToLLVMValueRef lhs, IQLToLLVMValueRef rhs, IQLToLLVMPredicate op);
 IQLToLLVMValueRef IQLToLLVMBuildIsNull(CodeGenerationContext * ctxt, IQLToLLVMValueRef val);
 void IQLToLLVMBuildSetValue2(CodeGenerationContext * ctxt, 
@@ -257,256 +255,6 @@ public:
   {
     return wrap(ctxt->leastCommonTypeNullable(unwrap(e1), unwrap(e2)));
   }
-};
-
-class IQLToLLVMTypePredicate
-{
-public:
-  static bool isChar(LLVMTypeRef ty)
-  {
-    // This is safe for now since we don't have int8 as an 
-    // IQL type.  Ultimately this should be removed and
-    // we should be using FieldType for this info.
-    return LLVMPointerTypeKind == LLVMGetTypeKind(ty) &&
-      LLVMArrayTypeKind == LLVMGetTypeKind(LLVMGetElementType(ty)) &&
-      llvm::unwrap(LLVMGetElementType(LLVMGetElementType(ty)))->isIntegerTy(8);
-  }
-  static bool isChar(LLVMValueRef val)
-  {
-    return isChar(LLVMTypeOf(val));
-  }
-  static bool isArrayType(LLVMTypeRef ty)
-  {
-    // This is safe for now since we don't have int8 as an 
-    // IQL type.  Ultimately this should be removed and
-    // we should be using FieldType for this info.
-    return LLVMPointerTypeKind == LLVMGetTypeKind(ty) &&
-      LLVMArrayTypeKind == LLVMGetTypeKind(LLVMGetElementType(ty)) &&
-      !llvm::unwrap(LLVMGetElementType(LLVMGetElementType(ty)))->isIntegerTy(8);
-  }
-  static bool isArrayType(LLVMValueRef val)
-  {
-    return isArrayType(LLVMTypeOf(val));
-  }
-};
-
-class IQLToLLVMTypeInspector
-{
-public:
-  static int32_t getCharArrayLength(LLVMTypeRef ty)
-  {
-    return LLVMGetArrayLength(LLVMGetElementType(ty));
-  }
-  static int32_t getCharArrayLength(LLVMValueRef val)
-  {
-    return getCharArrayLength(LLVMTypeOf(val));
-  }
-};
-
-class IQLToLLVMBinaryConversion
-{
-private:
-  static IQLToLLVMValueRef convertIntToDec(CodeGenerationContext * ctxt,
-					   LLVMValueRef llvmVal,
-					   bool isInt64)
-  {
-    const char * convertFn = isInt64 ? "InternalDecimalFromInt64" : "InternalDecimalFromInt32";
-    const char * retValName = isInt64 ? "64ToDecimal" : "32ToDecimal";
-    LLVMValueRef callArgs[3];
-    LLVMValueRef fn = LLVMGetNamedFunction(ctxt->LLVMModule, convertFn);
-    callArgs[0] = llvmVal;
-    callArgs[1] = LLVMCreateEntryBlockAlloca(ctxt, 
-					     ctxt->LLVMDecimal128Type, 
-					     retValName);
-    callArgs[2] = LLVMBuildLoad(ctxt->LLVMBuilder, 
-				ctxt->getContextArgumentRef(),
-				"ctxttmp");
-    LLVMBuildCall(ctxt->LLVMBuilder, fn, &callArgs[0], 3, "");
-    return IQLToLLVMValue::get(ctxt, 
-			       callArgs[1],
-			       IQLToLLVMValue::eLocal);
-  }
-
-public:
-  /**
-   * Can e1 be cast to e2?
-   */
-  static LLVMTypeRef castTo(CodeGenerationContext * ctxt, LLVMTypeRef e1, LLVMTypeRef e2)
-  {
-    if (e1 == LLVMInt32TypeInContext(ctxt->LLVMContext)) {
-      if (e2 == LLVMInt32TypeInContext(ctxt->LLVMContext))
-	return e1;
-      else if (e2 == LLVMInt64TypeInContext(ctxt->LLVMContext))
-	return e2;
-      else if (e2 == LLVMDoubleTypeInContext(ctxt->LLVMContext))
-	return e2;
-      else if (e2 == LLVMPointerType(ctxt->LLVMDecimal128Type, 0))
-	return e2;
-      else 
-	return NULL;
-    } else if (e1 == LLVMInt64TypeInContext(ctxt->LLVMContext)) {
-      if (e2 == LLVMInt64TypeInContext(ctxt->LLVMContext))
-	return e2;
-      else if (e2 == LLVMDoubleTypeInContext(ctxt->LLVMContext))
-	return e2;
-      else if (e2 == LLVMPointerType(ctxt->LLVMDecimal128Type, 0))
-	return e2;
-      else 
-	return NULL;    
-    } else if (IQLToLLVMTypePredicate::isChar(e1)) { // Char types
-      // TODO: What about CHAR(M) and CHAR(N) where M!=N?
-      if (IQLToLLVMTypePredicate::isChar(e2) &&
-	  IQLToLLVMTypeInspector::getCharArrayLength(e1) == 
-	  IQLToLLVMTypeInspector::getCharArrayLength(e2))
-	return e2;
-      // Type promotion of CHAR(N) to VARCHAR(max)
-      else if (LLVMPointerTypeKind == LLVMGetTypeKind(e2) &&
-	       LLVMGetElementType(e2) == ctxt->LLVMVarcharType)
-	return e2;
-      else 
-	return NULL;    
-    } else {
-      if (e1 == e2) 
-	return e1;
-      else
-	return NULL;
-    }
-  }
-  /**
-   * Can e1 be cast to e2 or vice versa?
-   */
-  static LLVMTypeRef leastCommonType(CodeGenerationContext * ctxt, LLVMTypeRef e1, LLVMTypeRef e2)
-  {
-    LLVMTypeRef ty = castTo(ctxt, e1, e2);
-    if (ty != NULL) return ty;
-    return castTo(ctxt, e2, e1);
-  }
-  /**
-   * Convert a value to the target type.
-   */
-  static IQLToLLVMValueRef convertTo(CodeGenerationContext * ctxt, 
-				     IQLToLLVMValueRef v, 
-				     LLVMTypeRef e2)
-  {
-    LLVMValueRef llvmVal = unwrap(v)->getValue();
-    // NULL literal
-    if (llvmVal == NULL)
-      return v;
-    LLVMTypeRef e1 = LLVMTypeOf(llvmVal);
-    // No conversion 
-    if (e1 == e2) 
-      return v;
-    
-    // Supported conversions
-    if (e1 == LLVMInt32TypeInContext(ctxt->LLVMContext)) {
-      if (e2 == LLVMInt64TypeInContext(ctxt->LLVMContext)) {
-	return IQLToLLVMValue::get(ctxt, 
-				   LLVMBuildSExt(ctxt->LLVMBuilder, 
-						 llvmVal, 
-						 LLVMInt64TypeInContext(ctxt->LLVMContext),
-						 "32to64"),
-				   IQLToLLVMValue::eLocal);
-      } else if (e2 == LLVMDoubleTypeInContext(ctxt->LLVMContext)) {
-	return IQLToLLVMValue::get(ctxt, 
-				   LLVMBuildSIToFP(ctxt->LLVMBuilder, 
-						   llvmVal, 
-						   LLVMDoubleTypeInContext(ctxt->LLVMContext),
-						   "32toDouble"),
-				   IQLToLLVMValue::eLocal);
-      } else if (e2 == LLVMPointerType(ctxt->LLVMDecimal128Type, 0)) {
-	return convertIntToDec(ctxt, llvmVal, false);
-      } else {
-	return NULL;
-      }
-    } else if (e1 == LLVMInt64TypeInContext(ctxt->LLVMContext)) {
-      if (e2 == LLVMDoubleTypeInContext(ctxt->LLVMContext)) {
-	return IQLToLLVMValue::get(ctxt, 
-				   LLVMBuildSIToFP(ctxt->LLVMBuilder, 
-						   llvmVal, 
-						   LLVMDoubleTypeInContext(ctxt->LLVMContext),
-						   "64toDouble"),
-				   IQLToLLVMValue::eLocal);
-      } else if (e2 == LLVMPointerType(ctxt->LLVMDecimal128Type, 0)) {
-	return convertIntToDec(ctxt, llvmVal, true);
-      } else {
-	return NULL; 
-      }   
-    } else if (IQLToLLVMTypePredicate::isChar(e1)) { // Char types
-      // TODO: What about CHAR(M) and CHAR(N) where M!=N?
-      // Type promotion of CHAR(N) to VARCHAR(max).  Must allocate
-      // the varchar.
-      if (LLVMPointerTypeKind == LLVMGetTypeKind(e2) &&
-	  LLVMGetElementType(e2) == ctxt->LLVMVarcharType) {
-	LLVMValueRef callArgs[4];
-	LLVMValueRef fn = LLVMGetNamedFunction(ctxt->LLVMModule, "InternalVarcharCopy");
-	// Create a temporary of type Varchar.  Put pointer to char and size into it so we may
-	// call InternalVarcharCopy.
-	callArgs[0] = LLVMCreateEntryBlockAlloca(ctxt, 
-						 ctxt->LLVMVarcharType, 
-						 "CharToVarchar");
-	// LLVM Char array length counts terminating 0 but Varchar Size should not.
-	IQLToLLVMVarcharSetSize(ctxt, 
-				callArgs[0], 
-				LLVMConstInt(LLVMInt32TypeInContext(ctxt->LLVMContext), 
-					     IQLToLLVMTypeInspector::getCharArrayLength(e1)-1,
-					     1));
-
-	// Cast char array to a pointer to int8_t.
-	LLVMTypeRef int8Ptr = LLVMPointerType(LLVMInt8TypeInContext(ctxt->LLVMContext), 0);
-	LLVMValueRef tmp1 = LLVMBuildBitCast(ctxt->LLVMBuilder, llvmVal, int8Ptr, "charcnvcasttmp1");
-	IQLToLLVMVarcharSetPtr(ctxt, 
-			       callArgs[0], 
-			       tmp1);
-
-	// This is the varchar we are converting to.
-	callArgs[1] = LLVMCreateEntryBlockAlloca(ctxt, ctxt->LLVMVarcharType, "varcharliteral");
-	// We must track the allocated memory.
-	callArgs[2] = LLVMConstInt(LLVMInt32TypeInContext(ctxt->LLVMContext), 
-				   1,
-				   1);
-	callArgs[3] = LLVMBuildLoad(ctxt->LLVMBuilder, 
-				    ctxt->getContextArgumentRef(),
-				    "ctxttmp");
-	LLVMBuildCall(ctxt->LLVMBuilder, fn, &callArgs[0], 4, "");
-	return IQLToLLVMValue::get(ctxt, callArgs[1], IQLToLLVMValue::eLocal);
-      }
-    } else {
-      return NULL;
-    }
-    return NULL;
-  }					     
-  /**
-   * Convert a value to the target type.
-   */
-  static IQLToLLVMValueRef convertTo(CodeGenerationContext * ctxt, 
-				     IQLToLLVMValueRef v, 
-				     const FieldType * ty)
-  {
-    LLVMTypeRef cvtTy = IQLToLLVMValue::getVariableType(ctxt, ty);
-    return convertTo(ctxt, v, cvtTy);
-  }
-private:
-  IQLToLLVMValueRef mLHS;
-  IQLToLLVMValueRef mRHS;
-  LLVMTypeRef mResultType;
-public:
-  IQLToLLVMBinaryConversion(CodeGenerationContext * ctxt, IQLToLLVMValueRef lhs, IQLToLLVMValueRef rhs)
-    :
-    mLHS(NULL),
-    mRHS(NULL),
-    mResultType(NULL)
-  {
-    // Figure out the conversion to perform.
-    mResultType = leastCommonType(ctxt,
-				  LLVMTypeOf(unwrap(lhs)->getValue()), 
-				  LLVMTypeOf(unwrap(rhs)->getValue()));
-    mLHS = convertTo(ctxt, lhs, mResultType);
-    mRHS = convertTo(ctxt, rhs, mResultType);
-  }
-
-  IQLToLLVMValueRef getLHS() { return mLHS; }
-  IQLToLLVMValueRef getRHS() { return mRHS; }
-  LLVMTypeRef getResultType() { return mResultType; }
 };
 
 IQLToLLVMValueVectorRef IQLToLLVMValueVectorCreate()
@@ -1058,86 +806,7 @@ IQLToLLVMValue::ValueType InternalBuildCall(CodeGenerationContext * ctxt,
 					    LLVMValueRef retTmp,
 					    const FieldType * retType)
 {
-  std::vector<LLVMValueRef> callArgs;
-  LLVMValueRef fn = LLVMGetNamedFunction(ctxt->LLVMModule, f);
-  if (fn == NULL) {
-    throw std::runtime_error((boost::format("Call to function %1% passed type checking "
-					    "but function does not exist") %
-			      f).str());
-  }
-  
-  for(std::size_t i=0; i<args.size(); i++) {
-    if (IQLToLLVMTypePredicate::isChar(args[i]->getValue())) {
-      LLVMValueRef e = args[i]->getValue();
-      // CHAR(N) arg must pass by reference
-      // Pass as a pointer to int8.  pointer to char(N) is too specific
-      // for a type signature.
-      LLVMTypeRef int8Ptr = LLVMPointerType(LLVMInt8TypeInContext(ctxt->LLVMContext), 0);
-      LLVMValueRef ptr = LLVMBuildBitCast(ctxt->LLVMBuilder, e, int8Ptr, "charcnvcasttmp1");
-      callArgs.push_back(ptr);
-    } else {
-      callArgs.push_back(args[i]->getValue());
-    }
-  }
-  
-  llvm::LLVMContext & c(*llvm::unwrap(ctxt->LLVMContext));
-  llvm::IRBuilder<> * b = llvm::unwrap(ctxt->LLVMBuilder);
-  const llvm::Type * unwrapped = llvm::unwrap(LLVMTypeOf(fn));
-  const llvm::PointerType * ptrTy = llvm::dyn_cast<llvm::PointerType>(unwrapped);
-  const llvm::FunctionType * fnTy = llvm::dyn_cast<llvm::FunctionType>(ptrTy->getElementType());
-  if (fnTy->getReturnType() == llvm::Type::getVoidTy(c)) {
-    // Validate the calling convention.  If returning void must
-    // also take RuntimeContext as last argument and take pointer
-    // to return as next to last argument.
-    if (callArgs.size() + 2 != fnTy->getNumParams() ||
-	fnTy->getParamType(fnTy->getNumParams()-1) != 
-	llvm::unwrap(ctxt->LLVMDecContextPtrType) ||
-	!fnTy->getParamType(fnTy->getNumParams()-2)->isPointerTy())
-      throw std::runtime_error("Internal Error");
-
-    const llvm::Type * retTy = retType->LLVMGetType(ctxt);
-    // The return type is determined by next to last argument.
-    const llvm::Type * retArgTy = llvm::cast<llvm::PointerType>(fnTy->getParamType(fnTy->getNumParams()-2))->getElementType();
-
-    // Must alloca a value for the return value and pass as an arg.
-    // No guarantee that the type of the formal of the function is exactly
-    // the same as the LLVM ret type (in particular, CHAR(N) return
-    // values will have a int8* formal) so we do a bitcast.
-    LLVMValueRef retVal = retTmp;
-    if (retTy != retArgTy) {
-      const llvm::ArrayType * arrTy = llvm::dyn_cast<llvm::ArrayType>(retTy);
-      if (retArgTy != b->getInt8Ty() ||
-	  NULL == arrTy ||
-	  arrTy->getElementType() != b->getInt8Ty()) {
-	throw std::runtime_error("INTERNAL ERROR: mismatch between IQL function "
-				 "return type and LLVM formal argument type.");
-      }
-      retVal = LLVMBuildBitCast(ctxt->LLVMBuilder, 
-				retVal,
-				llvm::wrap(llvm::PointerType::get(retArgTy, 0)),
-				"callReturnTempCast");
-    }
-    callArgs.push_back(retVal);					
-    // Also must pass the context for allocating the string memory.
-    callArgs.push_back(LLVMBuildLoad(ctxt->LLVMBuilder, 
-				     ctxt->getContextArgumentRef(),
-				     "ctxttmp"));    
-    LLVMBuildCall(ctxt->LLVMBuilder, 
-		  fn, 
-		  &callArgs[0], 
-		  callArgs.size(), 
-		  "");
-    // Return was the second to last entry in the arg list.
-    return IQLToLLVMValue::eLocal;
-  } else {
-    LLVMValueRef r = LLVMBuildCall(ctxt->LLVMBuilder, 
-				   fn, 
-				   &callArgs[0], 
-				   callArgs.size(), 
-				   "call");
-    LLVMBuildStore(ctxt->LLVMBuilder, r, retTmp);
-    return IQLToLLVMValue::eLocal;
-  }
+  return ctxt->buildCall(f, args, llvm::unwrap(retTmp), retType);
 }
 
 IQLToLLVMValueRef InternalBuildCall(CodeGenerationContext * ctxt, 
@@ -1719,28 +1388,8 @@ IQLToLLVMValueRef IQLToLLVMBuildIsNull(IQLCodeGenerationContextRef ctxtRef, IQLT
 
 IQLToLLVMValue::ValueType IQLToLLVMBuildCastInt32(CodeGenerationContext * ctxt, IQLToLLVMValueRef e, const FieldType * argAttrs, LLVMValueRef ret, const FieldType * retAttrs)
 {
-  LLVMValueRef e1 = unwrap(e)->getValue();
-  if (LLVMTypeOf(e1) == LLVMInt32TypeInContext(ctxt->LLVMContext)) {
-    LLVMBuildStore(ctxt->LLVMBuilder, e1, ret);
-    return IQLToLLVMValue::eLocal;
-  } else if (LLVMTypeOf(e1) == LLVMInt64TypeInContext(ctxt->LLVMContext)) {
-    LLVMValueRef r = LLVMBuildTrunc(ctxt->LLVMBuilder, 
-				    e1, 
-				    LLVMInt32TypeInContext(ctxt->LLVMContext),
-				    "castInt64ToInt32");
-    LLVMBuildStore(ctxt->LLVMBuilder, r, ret);
-    return IQLToLLVMValue::eLocal;
-  } else if (LLVMTypeOf(e1) == LLVMDoubleTypeInContext(ctxt->LLVMContext)) {
-    LLVMValueRef r = LLVMBuildFPToSI(ctxt->LLVMBuilder, 
-				     e1, 
-				     LLVMInt32TypeInContext(ctxt->LLVMContext),
-				     "castDoubleToInt32");
-    LLVMBuildStore(ctxt->LLVMBuilder, r, ret);
-    return IQLToLLVMValue::eLocal;
-  } else {
-    // TODO: Cast INTEGER to DECIMAL
-    throw std::runtime_error ("Decimal negate not implemented yet (call decNumberMinus).");
-  }
+  return ctxt->buildCastInt32(unwrap(e), argAttrs, 
+			      llvm::unwrap(ret), retAttrs);
 }
 
 // TODO: Support all directions of casting.
@@ -1759,27 +1408,8 @@ IQLToLLVMValue::ValueType IQLToLLVMBuildCastInt64(CodeGenerationContext * ctxt,
 						  LLVMValueRef ret, 
 						  const FieldType * retAttrs)
 {
-  LLVMValueRef e1 = unwrap(e)->getValue();
-  if (LLVMTypeOf(e1) == LLVMInt32TypeInContext(ctxt->LLVMContext)) {
-    LLVMValueRef r = LLVMBuildSExt(ctxt->LLVMBuilder, 
-				   e1, 
-				   LLVMInt64TypeInContext(ctxt->LLVMContext),
-				   "castInt32ToInt64");
-    LLVMBuildStore(ctxt->LLVMBuilder, r, ret);
-    return IQLToLLVMValue::eLocal;
-  } else if (LLVMTypeOf(e1) == LLVMInt64TypeInContext(ctxt->LLVMContext)) {
-    LLVMBuildStore(ctxt->LLVMBuilder, e1, ret);
-    return IQLToLLVMValue::eLocal;
-  } else if (LLVMTypeOf(e1) == LLVMDoubleTypeInContext(ctxt->LLVMContext)) {
-    LLVMValueRef r = LLVMBuildFPToSI(ctxt->LLVMBuilder, 
-				     e1, 
-				     LLVMInt64TypeInContext(ctxt->LLVMContext),
-				     "castDoubleToInt64");
-    LLVMBuildStore(ctxt->LLVMBuilder, r, ret);
-    return IQLToLLVMValue::eLocal;
-  } else {
-    throw std::runtime_error ("CAST(expr TO BIGINT) not implemented yet");
-  }
+  return ctxt->buildCastInt64(unwrap(e), argAttrs, 
+			      llvm::unwrap(ret), retAttrs);
 }
 
 IQLToLLVMValueRef IQLToLLVMBuildCastInt64(CodeGenerationContext * ctxt, 
@@ -2024,37 +1654,11 @@ IQLToLLVMValue::ValueType IQLToLLVMBuildDateAdd(CodeGenerationContext * ctxt,
 						const FieldType * lhsType, 
 						IQLToLLVMValueRef rhs, 
 						const FieldType * rhsType,
-						LLVMValueRef retVal)
+						LLVMValueRef retVal,
+						const FieldType * retType)
 {
-  LLVMValueRef e1 = unwrap(lhs)->getValue();
-  LLVMValueRef e2 = unwrap(rhs)->getValue();
-  if (lhsType != NULL && lhsType->GetEnum() == FieldType::INTERVAL) {
-    std::swap(e1, e2);
-    std::swap(lhs, rhs);
-    std::swap(lhsType, rhsType);
-  }
-  // BOOST_ASSERT(LLVMTypeOf(e1) == LLVMDoubleTypeInContext(ctxt->LLVMContext));
-  const IntervalType * intervalType = dynamic_cast<const IntervalType *>(rhsType);
-  IntervalType::IntervalUnit unit = intervalType->getIntervalUnit();
-  LLVMValueRef callArgs[2];
-  static const char * types [] = {"datetime", "date"};
-  const char * ty = 
-    lhsType->GetEnum() == FieldType::DATETIME ? types[0] : types[1];
-  std::string 
-    fnName((boost::format(
-			  unit == IntervalType::DAY ? "%1%_add_day" : 
-			  unit == IntervalType::HOUR ? "%1%_add_hour" :
-			  unit == IntervalType::MINUTE ? "%1%_add_minute" :
-			  unit == IntervalType::MONTH ? "%1%_add_month" :
-			  unit == IntervalType::SECOND ? "%1%_add_second" :
-			  "%1%_add_year") % ty).str());
-  LLVMValueRef fn = 
-    LLVMGetNamedFunction(ctxt->LLVMModule, fnName.c_str());
-  callArgs[0] = unwrap(lhs)->getValue();
-  callArgs[1] = unwrap(rhs)->getValue();
-  LLVMValueRef ret = LLVMBuildCall(ctxt->LLVMBuilder, fn, &callArgs[0], 2, "");
-  LLVMBuildStore(ctxt->LLVMBuilder, ret, retVal);
-  return IQLToLLVMValue::eLocal;
+  return ctxt->buildDateAdd(unwrap(lhs), lhsType, unwrap(rhs), rhsType,
+			    llvm::unwrap(retVal), retType);
 }
 
 IQLToLLVMValue::ValueType IQLToLLVMBuildCharAdd(CodeGenerationContext * ctxt, 
@@ -2119,7 +1723,7 @@ IQLToLLVMValue::ValueType IQLToLLVMBuildAdd(CodeGenerationContext * ctxt,
   if ((lhsType != NULL && lhsType->GetEnum() == FieldType::INTERVAL) ||
       (rhsType != NULL && rhsType->GetEnum() == FieldType::INTERVAL)) {
     // Special case handling of datetime/interval addition.
-    return IQLToLLVMBuildDateAdd(ctxt, lhs, lhsType, rhs, rhsType, ret);
+    return IQLToLLVMBuildDateAdd(ctxt, lhs, lhsType, rhs, rhsType, ret, retType);
   }
   if ((lhsType != NULL && lhsType->GetEnum() == FieldType::CHAR)) {
     return IQLToLLVMBuildCharAdd(ctxt, lhs, lhsType, rhs, rhsType, ret);
@@ -2176,25 +1780,8 @@ IQLToLLVMValue::ValueType IQLToLLVMBuildSub(CodeGenerationContext * ctxt,
 					    LLVMValueRef ret,
 					    const FieldType * retType)
 {
-  IQLToLLVMBinaryConversion cvt(ctxt, lhs, rhs);
-  lhs = cvt.getLHS();
-  rhs = cvt.getRHS();
-  LLVMValueRef e1 = unwrap(lhs)->getValue();
-  LLVMValueRef e2 = unwrap(rhs)->getValue();
-  if (LLVMTypeOf(e1) == LLVMInt32TypeInContext(ctxt->LLVMContext) ||
-      LLVMTypeOf(e1) == LLVMInt64TypeInContext(ctxt->LLVMContext)) {
-    LLVMValueRef r = LLVMBuildSub(ctxt->LLVMBuilder, e1, e2, "subtmp");
-    LLVMBuildStore(ctxt->LLVMBuilder, r, ret);
-    return IQLToLLVMValue::eLocal;
-  } else if (LLVMTypeOf(e1) == LLVMDoubleTypeInContext(ctxt->LLVMContext)) {
-    LLVMValueRef r = LLVMBuildFSub(ctxt->LLVMBuilder, e1, e2, "subtmp");
-    LLVMBuildStore(ctxt->LLVMBuilder, r, ret);
-    return IQLToLLVMValue::eLocal;
-  } else {
-    /* call the decimal add library function */
-    /* for decimal types we are getting alloca pointers in our expressions */
-    return IQLToLLVMCreateBinaryDecimalCall(ctxt, lhs, rhs, ret, iqlOpDecMinus);
-  }
+  return ctxt->buildSub(unwrap(lhs), lhsType, unwrap(rhs), rhsType,
+			llvm::unwrap(ret), retType);
 }
 
 IQLToLLVMValueRef IQLToLLVMBuildSub(IQLCodeGenerationContextRef ctxtRef, 
@@ -4151,6 +3738,13 @@ IQLFieldTypeRef IQLTypeCheckModulus(IQLTypeCheckContextRef ctxt,
 				    IQLFieldTypeRef rhs)
 {
   return wrap(unwrap(ctxt)->buildModulus(unwrap(lhs), unwrap(rhs)));
+}
+
+IQLFieldTypeRef IQLTypeCheckSub(IQLTypeCheckContextRef ctxt, 
+				    IQLFieldTypeRef lhs, 
+				    IQLFieldTypeRef rhs)
+{
+  return wrap(unwrap(ctxt)->buildSub(unwrap(lhs), unwrap(rhs)));
 }
 
 IQLFieldTypeRef IQLTypeCheckAdditiveType(IQLTypeCheckContextRef ctxtRef, IQLFieldTypeRef lhs, IQLFieldTypeRef rhs)

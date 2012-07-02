@@ -386,6 +386,16 @@ llvm::Value * Int32Type::getZero(CodeGenerationContext * ctxt) const
 				1);
 }
 
+bool Int32Type::isNumeric() const
+{
+  return true;
+}
+
+bool Int32Type::isIntegral() const
+{
+  return true;
+}
+
 std::string Int64Type::toString() const
 {
   return "BIGINT";
@@ -442,6 +452,16 @@ llvm::Value * Int64Type::getZero(CodeGenerationContext * ctxt) const
 				1);
 }
 
+bool Int64Type::isNumeric() const
+{
+  return true;
+}
+
+bool Int64Type::isIntegral() const
+{
+  return true;
+}
+
 std::string DoubleType::toString() const
 {
   return "DOUBLE PRECISION";
@@ -493,6 +513,16 @@ llvm::Value * DoubleType::getZero(CodeGenerationContext * ctxt) const
 {
   return llvm::ConstantFP::get(LLVMGetType(ctxt),
 			       0);
+}
+
+bool DoubleType::isNumeric() const
+{
+  return true;
+}
+
+bool DoubleType::isFloatingPoint() const
+{
+  return true;
 }
 
 std::string DecimalType::toString() const
@@ -589,6 +619,11 @@ llvm::Value * DecimalType::getZero(CodeGenerationContext * ctxt) const
   ::decNumberZero(&dn);
   ::decimal128FromNumber(&dec, &dn, &decCtxt);
   return createGlobalValue(ctxt, dec);
+}
+
+bool DecimalType::isNumeric() const
+{
+  return true;
 }
 
 std::string DatetimeType::toString() const

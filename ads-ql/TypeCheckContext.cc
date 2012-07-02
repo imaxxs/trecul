@@ -636,6 +636,31 @@ const FieldType * TypeCheckContext::buildAdd(const FieldType * lhs,
   return it->getDateResultType(mContext, nullable);  
 }
 
+const FieldType * TypeCheckContext::buildSub(const FieldType * lhs,
+					     const FieldType * rhs)
+{
+  bool nullable = lhs->isNullable() || rhs->isNullable();
+  if (lhs->GetEnum() == FieldType::DATE) {
+    if (rhs->GetEnum() != FieldType::INTERVAL) {
+      throw std::runtime_error("Can only subtract INTERVAL from DATE");
+    }
+    const IntervalType * it = static_cast<const IntervalType *>(rhs);
+    return it->getDateResultType(mContext, nullable);  
+  } else if (lhs->GetEnum() == FieldType::DATETIME) {
+    if (rhs->GetEnum() != FieldType::INTERVAL) {
+      throw std::runtime_error("Can only subtract INTERVAL from DATE");
+    }
+    const IntervalType * it = static_cast<const IntervalType *>(rhs);
+    return buildDatetimeType(nullable);
+  } else {
+    const FieldType * ty = leastCommonTypeNullable(lhs, rhs);
+    if(ty == NULL || !ty->isNumeric()) {
+      throw std::runtime_error("Can only subtract numeric fields");
+    }
+    return ty;
+  }
+}
+
 const FieldType * TypeCheckContext::buildModulus(const FieldType * lhs,
 						 const FieldType * rhs)
 {

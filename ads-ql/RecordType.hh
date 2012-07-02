@@ -488,6 +488,23 @@ public:
   virtual llvm::Value * getZero(CodeGenerationContext * ctxt) const;
 
   /**
+   * Predicates
+   */
+  virtual bool isNumeric() const 
+  {
+    return false;
+  }
+  virtual bool isIntegral() const 
+  {
+    return false;
+  }
+  virtual bool isFloatingPoint() const 
+  {
+    return false;
+  }
+
+
+  /**
    * Context this type was created in.
    */
   DynamicRecordContext & getContext() const
@@ -568,6 +585,8 @@ public:
   llvm::Value * getMinValue(CodeGenerationContext * ctxt) const;
   llvm::Value * getMaxValue(CodeGenerationContext * ctxt) const;
   llvm::Value * getZero(CodeGenerationContext * ctxt) const;
+  bool isNumeric() const;
+  bool isIntegral() const;
 };
 
 class Int64Type : public FieldType
@@ -591,6 +610,8 @@ public:
   llvm::Value * getMinValue(CodeGenerationContext * ctxt) const;
   llvm::Value * getMaxValue(CodeGenerationContext * ctxt) const;
   llvm::Value * getZero(CodeGenerationContext * ctxt) const;
+  bool isNumeric() const;
+  bool isIntegral() const;
 };
 
 class DoubleType : public FieldType
@@ -617,6 +638,8 @@ public:
   llvm::Value * getMinValue(CodeGenerationContext * ctxt) const;
   llvm::Value * getMaxValue(CodeGenerationContext * ctxt) const;
   llvm::Value * getZero(CodeGenerationContext * ctxt) const;
+  bool isNumeric() const;
+  bool isFloatingPoint() const;
 };
 
 /**
@@ -648,6 +671,7 @@ public:
   llvm::Value * getMinValue(CodeGenerationContext * ctxt) const;
   llvm::Value * getMaxValue(CodeGenerationContext * ctxt) const;
   llvm::Value * getZero(CodeGenerationContext * ctxt) const;
+  bool isNumeric() const;
 };
 
 /**

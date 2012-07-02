@@ -37,6 +37,16 @@
 #include "RecordType.hh"
 #include "TypeCheckContext.hh"
 
+/**
+ * Call a decimal binary operator.
+ */
+IQLToLLVMValue::ValueType 
+IQLToLLVMCreateBinaryDecimalCall(CodeGenerationContext * ctxt, 
+				 IQLToLLVMValueRef lhs, 
+				 IQLToLLVMValueRef rhs, 
+				 LLVMValueRef ret,
+				 enum DecimalOpCode opCode);
+
 IQLToLLVMValue::IQLToLLVMValue (LLVMValueRef val, 
 				IQLToLLVMValue::ValueType globalOrLocal)
   :
@@ -674,6 +684,290 @@ CodeGenerationContext::buildGlobalConstArray(std::vector<const IQLToLLVMValue *>
   return unwrap(IQLToLLVMValue::get(this, llvm::wrap(globalArray), IQLToLLVMValue::eLocal));
 }
 
+IQLToLLVMValue::ValueType 
+CodeGenerationContext::buildCall(const char * f,
+				 const std::vector<const IQLToLLVMValue *> & args,
+				 llvm::Value * retTmp,
+				 const FieldType * retType)
+{
+  llvm::LLVMContext & c(*llvm::unwrap(LLVMContext));
+  llvm::IRBuilder<> * b = llvm::unwrap(LLVMBuilder);
+
+  std::vector<LLVMValueRef> callArgs;
+  LLVMValueRef fn = LLVMGetNamedFunction(LLVMModule, f);
+  if (fn == NULL) {
+    throw std::runtime_error((boost::format("Call to function %1% passed type checking "
+					    "but function does not exist") %
+			      f).str());
+  }
+  
+  for(std::size_t i=0; i<args.size(); i++) {
+    if (IQLToLLVMTypePredicate::isChar(args[i]->getValue())) {
+      LLVMValueRef e = args[i]->getValue();
+      // CHAR(N) arg must pass by reference
+      // Pass as a pointer to int8.  pointer to char(N) is too specific
+      // for a type signature.
+      LLVMTypeRef int8Ptr = LLVMPointerType(LLVMInt8TypeInContext(LLVMContext), 0);
+      LLVMValueRef ptr = LLVMBuildBitCast(LLVMBuilder, e, int8Ptr, "charcnvcasttmp1");
+      callArgs.push_back(ptr);
+    } else {
+      callArgs.push_back(args[i]->getValue());
+    }
+  }
+  
+  const llvm::Type * unwrapped = llvm::unwrap(LLVMTypeOf(fn));
+  const llvm::PointerType * ptrTy = llvm::dyn_cast<llvm::PointerType>(unwrapped);
+  const llvm::FunctionType * fnTy = llvm::dyn_cast<llvm::FunctionType>(ptrTy->getElementType());
+  if (fnTy->getReturnType() == llvm::Type::getVoidTy(c)) {
+    // Validate the calling convention.  If returning void must
+    // also take RuntimeContext as last argument and take pointer
+    // to return as next to last argument.
+    if (callArgs.size() + 2 != fnTy->getNumParams() ||
+	fnTy->getParamType(fnTy->getNumParams()-1) != 
+	llvm::unwrap(LLVMDecContextPtrType) ||
+	!fnTy->getParamType(fnTy->getNumParams()-2)->isPointerTy())
+      throw std::runtime_error("Internal Error");
+
+    const llvm::Type * retTy = retType->LLVMGetType(this);
+    // The return type is determined by next to last argument.
+    const llvm::Type * retArgTy = llvm::cast<llvm::PointerType>(fnTy->getParamType(fnTy->getNumParams()-2))->getElementType();
+
+    // Must alloca a value for the return value and pass as an arg.
+    // No guarantee that the type of the formal of the function is exactly
+    // the same as the LLVM ret type (in particular, CHAR(N) return
+    // values will have a int8* formal) so we do a bitcast.
+    LLVMValueRef retVal = llvm::wrap(retTmp);
+    if (retTy != retArgTy) {
+      const llvm::ArrayType * arrTy = llvm::dyn_cast<llvm::ArrayType>(retTy);
+      if (retArgTy != b->getInt8Ty() ||
+	  NULL == arrTy ||
+	  arrTy->getElementType() != b->getInt8Ty()) {
+	throw std::runtime_error("INTERNAL ERROR: mismatch between IQL function "
+				 "return type and LLVM formal argument type.");
+      }
+      retVal = LLVMBuildBitCast(LLVMBuilder, 
+				retVal,
+				llvm::wrap(llvm::PointerType::get(retArgTy, 0)),
+				"callReturnTempCast");
+    }
+    callArgs.push_back(retVal);					
+    // Also must pass the context for allocating the string memory.
+    callArgs.push_back(LLVMBuildLoad(LLVMBuilder, 
+				     getContextArgumentRef(),
+				     "ctxttmp"));    
+    LLVMBuildCall(LLVMBuilder, 
+		  fn, 
+		  &callArgs[0], 
+		  callArgs.size(), 
+		  "");
+    // Return was the second to last entry in the arg list.
+    return IQLToLLVMValue::eLocal;
+  } else {
+    LLVMValueRef r = LLVMBuildCall(LLVMBuilder, 
+				   fn, 
+				   &callArgs[0], 
+				   callArgs.size(), 
+				   "call");
+    b->CreateStore(llvm::unwrap(r), retTmp);
+    return IQLToLLVMValue::eLocal;
+  }
+}
+
+IQLToLLVMValue::ValueType 
+CodeGenerationContext::buildCastInt32(const IQLToLLVMValue * e, 
+				      const FieldType * argAttrs, 
+				      llvm::Value * ret, 
+				      const FieldType * retAttrs)
+{
+  llvm::Value * e1 = llvm::unwrap(e->getValue());
+  llvm::LLVMContext * c = llvm::unwrap(LLVMContext);
+  llvm::IRBuilder<> * b = llvm::unwrap(LLVMBuilder);
+  std::vector<const IQLToLLVMValue *> args;
+  args.push_back(e);
+
+  switch(argAttrs->GetEnum()) {
+  case FieldType::INT32:
+    b->CreateStore(e1, ret);
+    return IQLToLLVMValue::eLocal;
+  case FieldType::INT64:
+    {
+      llvm::Value * r = b->CreateTrunc(e1, 
+				       b->getInt32Ty(),
+				       "castInt64ToInt32");
+      b->CreateStore(r, ret);
+      return IQLToLLVMValue::eLocal;
+    }
+  case FieldType::DOUBLE:
+    {
+      llvm::Value * r = b->CreateFPToSI(e1, 
+					b->getInt32Ty(),
+					"castDoubleToInt32");
+      b->CreateStore(r, ret);
+      return IQLToLLVMValue::eLocal;
+    }
+  case FieldType::CHAR:
+    {
+      return buildCall("InternalInt32FromChar", args, ret, retAttrs);
+    }
+  case FieldType::VARCHAR:
+    {
+      return buildCall("InternalInt32FromVarchar", args, ret, retAttrs);
+    }
+  case FieldType::BIGDECIMAL:
+    {
+      return buildCall("InternalInt32FromDecimal", args, ret, retAttrs);
+    }
+  case FieldType::DATE:
+    {
+      return buildCall("InternalInt32FromDate", args, ret, retAttrs);
+    }
+  case FieldType::DATETIME:
+    {
+      return buildCall("InternalInt32FromDatetime", args, ret, retAttrs);
+    }
+  default:
+    // TODO: Cast INTEGER to DECIMAL
+    throw std::runtime_error ((boost::format("Cast to INTEGER from %1% not "
+					     "implemented.") % 
+			       retAttrs->toString()).str());
+  }
+}
+
+IQLToLLVMValue::ValueType 
+CodeGenerationContext::buildCastInt64(const IQLToLLVMValue * e, 
+				      const FieldType * argAttrs, 
+				      llvm::Value * ret, 
+				      const FieldType * retAttrs)
+{
+  llvm::Value * e1 = llvm::unwrap(e->getValue());
+  llvm::LLVMContext * c = llvm::unwrap(LLVMContext);
+  llvm::IRBuilder<> * b = llvm::unwrap(LLVMBuilder);
+  std::vector<const IQLToLLVMValue *> args;
+  args.push_back(e);
+
+  switch(argAttrs->GetEnum()) {
+  case FieldType::INT32:
+    {
+      llvm::Value * r = b->CreateSExt(e1, 
+				      b->getInt64Ty(),
+				      "castInt64ToInt32");
+      b->CreateStore(r, ret);
+      return IQLToLLVMValue::eLocal;
+    }
+  case FieldType::INT64:
+    b->CreateStore(e1, ret);
+    return IQLToLLVMValue::eLocal;
+  case FieldType::DOUBLE:
+    {
+      llvm::Value * r = b->CreateFPToSI(e1, 
+					b->getInt64Ty(),
+					"castDoubleToInt64");
+      b->CreateStore(r, ret);
+      return IQLToLLVMValue::eLocal;
+    }
+  case FieldType::CHAR:
+    {
+      return buildCall("InternalInt64FromChar", args, ret, retAttrs);
+    }
+  case FieldType::VARCHAR:
+    {
+      return buildCall("InternalInt64FromVarchar", args, ret, retAttrs);
+    }
+  case FieldType::BIGDECIMAL:
+    {
+      return buildCall("InternalInt64FromDecimal", args, ret, retAttrs);
+    }
+  case FieldType::DATE:
+    {
+      return buildCall("InternalInt64FromDate", args, ret, retAttrs);
+    }
+  case FieldType::DATETIME:
+    {
+      return buildCall("InternalInt64FromDatetime", args, ret, retAttrs);
+    }
+  default:
+    // TODO: 
+    throw std::runtime_error ((boost::format("Cast to BIGINT from %1% not "
+					     "implemented.") % 
+			       retAttrs->toString()).str());
+  }
+}
+
+IQLToLLVMValue::ValueType 
+CodeGenerationContext::buildSub(const IQLToLLVMValue * lhs, 
+				const FieldType * lhsType, 
+				const IQLToLLVMValue * rhs, 
+				const FieldType * rhsType, 
+				llvm::Value * ret, 
+				const FieldType * retType)
+{
+  llvm::IRBuilder<> * b = llvm::unwrap(LLVMBuilder);
+  if (lhsType->GetEnum() == FieldType::DATE ||
+      lhsType->GetEnum() == FieldType::DATETIME) {
+    // Negate the interval value (which is integral)
+    // then call add
+    LLVMValueRef neg = 
+      LLVMBuildNeg(LLVMBuilder, rhs->getValue(), "negintervaltmp");
+    rhs = unwrap(IQLToLLVMValue::get(this, neg, IQLToLLVMValue::eLocal));
+    return buildDateAdd(lhs, lhsType, rhs, rhsType, ret, retType);
+  } else {  
+    IQLToLLVMBinaryConversion cvt(this, wrap(lhs), wrap(rhs));
+    lhs = unwrap(cvt.getLHS());
+    rhs = unwrap(cvt.getRHS());
+    llvm::Value * e1 = llvm::unwrap(lhs->getValue());
+    llvm::Value * e2 = llvm::unwrap(rhs->getValue());
+    if (lhsType->isIntegral()) {
+      b->CreateStore(b->CreateSub(e1, e2), ret);
+      return IQLToLLVMValue::eLocal;
+    } else if (lhsType->isFloatingPoint()) {
+      b->CreateStore(b->CreateFSub(e1, e2), ret);
+      return IQLToLLVMValue::eLocal;
+    } else if (lhsType->GetEnum() == FieldType::BIGDECIMAL) {
+      /* call the decimal add library function */
+      /* for decimal types we are getting alloca pointers in our expressions */
+      return IQLToLLVMCreateBinaryDecimalCall(this, wrap(lhs), wrap(rhs), llvm::wrap(ret), iqlOpDecMinus);     
+    } else {
+      throw std::runtime_error("INTERNAL ERROR: unexpected type in subtract");
+    }
+  }
+}
+
+IQLToLLVMValue::ValueType 
+CodeGenerationContext::buildDateAdd(const IQLToLLVMValue * lhs, 
+				    const FieldType * lhsType, 
+				    const IQLToLLVMValue * rhs, 
+				    const FieldType * rhsType, 
+				    llvm::Value * retVal, 
+				    const FieldType * retType)
+{
+  llvm::IRBuilder<> * b = llvm::unwrap(LLVMBuilder);
+  if (lhsType != NULL && lhsType->GetEnum() == FieldType::INTERVAL) {
+    std::swap(lhs, rhs);
+    std::swap(lhsType, rhsType);
+  }
+  const IntervalType * intervalType = dynamic_cast<const IntervalType *>(rhsType);
+  IntervalType::IntervalUnit unit = intervalType->getIntervalUnit();
+  LLVMValueRef callArgs[2];
+  static const char * types [] = {"datetime", "date"};
+  const char * ty = 
+    lhsType->GetEnum() == FieldType::DATETIME ? types[0] : types[1];
+  std::string 
+    fnName((boost::format(
+			  unit == IntervalType::DAY ? "%1%_add_day" : 
+			  unit == IntervalType::HOUR ? "%1%_add_hour" :
+			  unit == IntervalType::MINUTE ? "%1%_add_minute" :
+			  unit == IntervalType::MONTH ? "%1%_add_month" :
+			  unit == IntervalType::SECOND ? "%1%_add_second" :
+			  "%1%_add_year") % ty).str());
+  LLVMValueRef fn = 
+    LLVMGetNamedFunction(LLVMModule, fnName.c_str());
+  callArgs[0] = lhs->getValue();
+  callArgs[1] = rhs->getValue();
+  LLVMValueRef ret = LLVMBuildCall(LLVMBuilder, fn, &callArgs[0], 2, "");
+  b->CreateStore(llvm::unwrap(ret), retVal);
+  return IQLToLLVMValue::eLocal;  
+}
+
 LLVMSymbolTableRef LLVMSymbolTableCreate()
 {
   return reinterpret_cast<LLVMSymbolTableRef>(new std::map<std::string, IQLToLLVMValueRef>());
@@ -718,3 +1012,232 @@ void LLVMSymbolTableDump(LLVMSymbolTableRef symTable)
   }
 }
 
+bool IQLToLLVMTypePredicate::isChar(LLVMTypeRef ty)
+{
+  // This is safe for now since we don't have int8 as an 
+  // IQL type.  Ultimately this should be removed and
+  // we should be using FieldType for this info.
+  return LLVMPointerTypeKind == LLVMGetTypeKind(ty) &&
+    LLVMArrayTypeKind == LLVMGetTypeKind(LLVMGetElementType(ty)) &&
+    llvm::unwrap(LLVMGetElementType(LLVMGetElementType(ty)))->isIntegerTy(8);
+}
+bool IQLToLLVMTypePredicate::isChar(LLVMValueRef val)
+{
+  return isChar(LLVMTypeOf(val));
+}
+bool IQLToLLVMTypePredicate::isArrayType(LLVMTypeRef ty)
+{
+  // This is safe for now since we don't have int8 as an 
+  // IQL type.  Ultimately this should be removed and
+  // we should be using FieldType for this info.
+  return LLVMPointerTypeKind == LLVMGetTypeKind(ty) &&
+    LLVMArrayTypeKind == LLVMGetTypeKind(LLVMGetElementType(ty)) &&
+    !llvm::unwrap(LLVMGetElementType(LLVMGetElementType(ty)))->isIntegerTy(8);
+}
+bool IQLToLLVMTypePredicate::isArrayType(LLVMValueRef val)
+{
+  return isArrayType(LLVMTypeOf(val));
+}
+
+IQLToLLVMValueRef IQLToLLVMBinaryConversion::convertIntToDec(CodeGenerationContext * ctxt,
+							     LLVMValueRef llvmVal,
+							     bool isInt64)
+{
+  const char * convertFn = isInt64 ? "InternalDecimalFromInt64" : "InternalDecimalFromInt32";
+  const char * retValName = isInt64 ? "64ToDecimal" : "32ToDecimal";
+  LLVMValueRef callArgs[3];
+  LLVMValueRef fn = LLVMGetNamedFunction(ctxt->LLVMModule, convertFn);
+  callArgs[0] = llvmVal;
+  callArgs[1] = LLVMCreateEntryBlockAlloca(ctxt, 
+					   ctxt->LLVMDecimal128Type, 
+					   retValName);
+  callArgs[2] = LLVMBuildLoad(ctxt->LLVMBuilder, 
+			      ctxt->getContextArgumentRef(),
+			      "ctxttmp");
+  LLVMBuildCall(ctxt->LLVMBuilder, fn, &callArgs[0], 3, "");
+  return IQLToLLVMValue::get(ctxt, 
+			     callArgs[1],
+			     IQLToLLVMValue::eLocal);
+}
+
+/**
+ * Can e1 be cast to e2?
+ */
+LLVMTypeRef IQLToLLVMBinaryConversion::castTo(CodeGenerationContext * ctxt, LLVMTypeRef e1, LLVMTypeRef e2)
+{
+  if (e1 == LLVMInt32TypeInContext(ctxt->LLVMContext)) {
+    if (e2 == LLVMInt32TypeInContext(ctxt->LLVMContext))
+      return e1;
+    else if (e2 == LLVMInt64TypeInContext(ctxt->LLVMContext))
+      return e2;
+    else if (e2 == LLVMDoubleTypeInContext(ctxt->LLVMContext))
+      return e2;
+    else if (e2 == LLVMPointerType(ctxt->LLVMDecimal128Type, 0))
+      return e2;
+    else 
+      return NULL;
+  } else if (e1 == LLVMInt64TypeInContext(ctxt->LLVMContext)) {
+    if (e2 == LLVMInt64TypeInContext(ctxt->LLVMContext))
+      return e2;
+    else if (e2 == LLVMDoubleTypeInContext(ctxt->LLVMContext))
+      return e2;
+    else if (e2 == LLVMPointerType(ctxt->LLVMDecimal128Type, 0))
+      return e2;
+    else 
+      return NULL;    
+  } else if (IQLToLLVMTypePredicate::isChar(e1)) { // Char types
+    // TODO: What about CHAR(M) and CHAR(N) where M!=N?
+    if (IQLToLLVMTypePredicate::isChar(e2) &&
+	IQLToLLVMTypeInspector::getCharArrayLength(e1) == 
+	IQLToLLVMTypeInspector::getCharArrayLength(e2))
+      return e2;
+    // Type promotion of CHAR(N) to VARCHAR(max)
+    else if (LLVMPointerTypeKind == LLVMGetTypeKind(e2) &&
+	     LLVMGetElementType(e2) == ctxt->LLVMVarcharType)
+      return e2;
+    else 
+      return NULL;    
+  } else {
+    if (e1 == e2) 
+      return e1;
+    else
+      return NULL;
+  }
+}
+/**
+ * Can e1 be cast to e2 or vice versa?
+ */
+LLVMTypeRef IQLToLLVMBinaryConversion::leastCommonType(CodeGenerationContext * ctxt, LLVMTypeRef e1, LLVMTypeRef e2)
+{
+  LLVMTypeRef ty = castTo(ctxt, e1, e2);
+  if (ty != NULL) return ty;
+  return castTo(ctxt, e2, e1);
+}
+/**
+ * Convert a value to the target type.
+ */
+IQLToLLVMValueRef IQLToLLVMBinaryConversion::convertTo(CodeGenerationContext * ctxt, 
+						       IQLToLLVMValueRef v, 
+						       LLVMTypeRef e2)
+{
+  LLVMValueRef llvmVal = unwrap(v)->getValue();
+  // NULL literal
+  if (llvmVal == NULL)
+    return v;
+  LLVMTypeRef e1 = LLVMTypeOf(llvmVal);
+  // No conversion 
+  if (e1 == e2) 
+    return v;
+    
+  // Supported conversions
+  if (e1 == LLVMInt32TypeInContext(ctxt->LLVMContext)) {
+    if (e2 == LLVMInt64TypeInContext(ctxt->LLVMContext)) {
+      return IQLToLLVMValue::get(ctxt, 
+				 LLVMBuildSExt(ctxt->LLVMBuilder, 
+					       llvmVal, 
+					       LLVMInt64TypeInContext(ctxt->LLVMContext),
+					       "32to64"),
+				 IQLToLLVMValue::eLocal);
+    } else if (e2 == LLVMDoubleTypeInContext(ctxt->LLVMContext)) {
+      return IQLToLLVMValue::get(ctxt, 
+				 LLVMBuildSIToFP(ctxt->LLVMBuilder, 
+						 llvmVal, 
+						 LLVMDoubleTypeInContext(ctxt->LLVMContext),
+						 "32toDouble"),
+				 IQLToLLVMValue::eLocal);
+    } else if (e2 == LLVMPointerType(ctxt->LLVMDecimal128Type, 0)) {
+      return convertIntToDec(ctxt, llvmVal, false);
+    } else {
+      return NULL;
+    }
+  } else if (e1 == LLVMInt64TypeInContext(ctxt->LLVMContext)) {
+    if (e2 == LLVMDoubleTypeInContext(ctxt->LLVMContext)) {
+      return IQLToLLVMValue::get(ctxt, 
+				 LLVMBuildSIToFP(ctxt->LLVMBuilder, 
+						 llvmVal, 
+						 LLVMDoubleTypeInContext(ctxt->LLVMContext),
+						 "64toDouble"),
+				 IQLToLLVMValue::eLocal);
+    } else if (e2 == LLVMPointerType(ctxt->LLVMDecimal128Type, 0)) {
+      return convertIntToDec(ctxt, llvmVal, true);
+    } else {
+      return NULL; 
+    }   
+  } else if (IQLToLLVMTypePredicate::isChar(e1)) { // Char types
+    // TODO: What about CHAR(M) and CHAR(N) where M!=N?
+    // Type promotion of CHAR(N) to VARCHAR(max).  Must allocate
+    // the varchar.
+    if (LLVMPointerTypeKind == LLVMGetTypeKind(e2) &&
+	LLVMGetElementType(e2) == ctxt->LLVMVarcharType) {
+      LLVMValueRef callArgs[4];
+      LLVMValueRef fn = LLVMGetNamedFunction(ctxt->LLVMModule, "InternalVarcharCopy");
+      // Create a temporary of type Varchar.  Put pointer to char and size into it so we may
+      // call InternalVarcharCopy.
+      callArgs[0] = LLVMCreateEntryBlockAlloca(ctxt, 
+					       ctxt->LLVMVarcharType, 
+					       "CharToVarchar");
+      // LLVM Char array length counts terminating 0 but Varchar Size should not.
+      IQLToLLVMVarcharSetSize(ctxt, 
+			      callArgs[0], 
+			      LLVMConstInt(LLVMInt32TypeInContext(ctxt->LLVMContext), 
+					   IQLToLLVMTypeInspector::getCharArrayLength(e1)-1,
+					   1));
+
+      // Cast char array to a pointer to int8_t.
+      LLVMTypeRef int8Ptr = LLVMPointerType(LLVMInt8TypeInContext(ctxt->LLVMContext), 0);
+      LLVMValueRef tmp1 = LLVMBuildBitCast(ctxt->LLVMBuilder, llvmVal, int8Ptr, "charcnvcasttmp1");
+      IQLToLLVMVarcharSetPtr(ctxt, 
+			     callArgs[0], 
+			     tmp1);
+
+      // This is the varchar we are converting to.
+      callArgs[1] = LLVMCreateEntryBlockAlloca(ctxt, ctxt->LLVMVarcharType, "varcharliteral");
+      // We must track the allocated memory.
+      callArgs[2] = LLVMConstInt(LLVMInt32TypeInContext(ctxt->LLVMContext), 
+				 1,
+				 1);
+      callArgs[3] = LLVMBuildLoad(ctxt->LLVMBuilder, 
+				  ctxt->getContextArgumentRef(),
+				  "ctxttmp");
+      LLVMBuildCall(ctxt->LLVMBuilder, fn, &callArgs[0], 4, "");
+      return IQLToLLVMValue::get(ctxt, callArgs[1], IQLToLLVMValue::eLocal);
+    }
+  } else {
+    return NULL;
+  }
+  return NULL;
+}					     
+/**
+ * Convert a value to the target type.
+ */
+IQLToLLVMValueRef IQLToLLVMBinaryConversion::convertTo(CodeGenerationContext * ctxt, 
+						       IQLToLLVMValueRef v, 
+						       const FieldType * ty)
+{
+  LLVMTypeRef cvtTy = IQLToLLVMValue::getVariableType(ctxt, ty);
+  return convertTo(ctxt, v, cvtTy);
+}
+
+IQLToLLVMBinaryConversion::IQLToLLVMBinaryConversion(CodeGenerationContext * ctxt, IQLToLLVMValueRef lhs, IQLToLLVMValueRef rhs)
+  :
+  mLHS(NULL),
+  mRHS(NULL),
+  mResultType(NULL)
+{
+  // Figure out the conversion to perform.
+  mResultType = leastCommonType(ctxt,
+				LLVMTypeOf(unwrap(lhs)->getValue()), 
+				LLVMTypeOf(unwrap(rhs)->getValue()));
+  mLHS = convertTo(ctxt, lhs, mResultType);
+  mRHS = convertTo(ctxt, rhs, mResultType);
+}
+
+int32_t IQLToLLVMTypeInspector::getCharArrayLength(LLVMTypeRef ty)
+{
+  return LLVMGetArrayLength(LLVMGetElementType(ty));
+}
+
+int32_t IQLToLLVMTypeInspector::getCharArrayLength(LLVMValueRef val)
+{
+  return getCharArrayLength(LLVMTypeOf(val));
+}

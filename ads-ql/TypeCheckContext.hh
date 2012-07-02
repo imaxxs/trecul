@@ -218,6 +218,8 @@ public:
    */
   const FieldType * buildAdd(const FieldType * lhs, 
 			     const FieldType * rhs);
+  const FieldType * buildSub(const FieldType * lhs, 
+			     const FieldType * rhs);
   const FieldType * buildModulus(const FieldType * lhs, 
 				 const FieldType * rhs);
   const FieldType * buildBitwise(const FieldType * lhs, 

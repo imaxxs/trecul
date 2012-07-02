@@ -32,6 +32,7 @@
  * OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <cstdlib>
 #include <iostream>
 #include <stdexcept>
 #include <boost/utility.hpp>
@@ -201,6 +202,42 @@ decNumber * decNumberFromInt64(decNumber *dn, int64_t in) {
   if (in<0) dn->bits=DECNEG;            // sign needed
   return dn;
   } // decNumberFromInt64
+
+int64_t decNumberToInt64(const decNumber *dn, decContext *set) {
+#if DECCHECK
+  if (decCheckOperands(DECUNRESU, DECUNUSED, dn, set)) return 0;
+#endif
+
+  // special or too many digits, or bad exponent
+  if (dn->bits&DECSPECIAL || dn->digits>20 || dn->exponent!=0) ; // bad
+  else { // is a finite integer with 20 or fewer digits
+    int64_t d;                     // work
+    const Unit *up;                // ..
+    uint64_t hi=0, lo;             // ..
+    up=dn->lsu;                    // -> lsu
+    lo=*up;                        // get 1 to 19 digits
+#if DECDPUN>1                  // split to higher
+    hi=lo/10;
+    lo=lo%10;
+#endif
+    up++;
+    // collect remaining Units, if any, into hi
+    for (d=DECDPUN; d<dn->digits; up++, d+=DECDPUN) hi+=*up*DECPOWERS[d-1];
+    // now low has the lsd, hi the remainder
+    if (hi>922337203685477580LL || (hi==922337203685477580LL && lo>7)) { // out of range?
+      // most-negative is a reprieve
+      if (dn->bits&DECNEG && hi==922337203685477580LL && lo==8) return 0x80000000;
+      // bad -- drop through
+    }
+    else { // in-range always
+      Int i=X10(hi)+lo;
+      if (dn->bits&DECNEG) return -i;
+      return i;
+    }
+  } // integer
+  decContextSetStatus(set, DEC_Invalid_operation); // [may not return]
+  return 0;
+} // decNumberToInt32
 
 std::ostream& operator<<(std::ostream& str, decimal128& val) {
   char buf[DECIMAL128_String];
@@ -494,6 +531,96 @@ extern "C" void InternalVarcharFromDatetime(boost::posix_time::ptime t,
 	  (int32_t) parts.day, dur.hours(), dur.minutes(), dur.seconds());
   result->Size = 19;
   result->Ptr = buf;  
+}
+
+extern "C" void InternalInt32FromVarchar(const Varchar * arg,
+					 int32_t * ret,
+					 InterpreterContext * ctxt) 
+{
+  *ret = atoi(arg->Ptr);
+}
+
+extern "C" void InternalInt32FromChar(const char * arg,
+				      int32_t * ret,
+				      InterpreterContext * ctxt) 
+{
+  *ret = atoi(arg);
+}
+
+extern "C" void InternalInt32FromDecimal(decimal128 * arg,
+					 int32_t * ret,
+					 InterpreterContext * ctxt) 
+{
+  decNumber a;
+  decimal128ToNumber(arg, &a);
+  char buf[100];
+  decNumber one;
+  decNumberFromInt32(&one, 1);
+  decNumber rounded;
+  decNumberQuantize(&rounded, &a, &one, ctxt->getDecimalContext());
+  *ret = decNumberToInt32(&rounded, ctxt->getDecimalContext());
+}
+
+extern "C" void InternalInt32FromDate(boost::gregorian::date arg,
+				      int32_t * ret,
+				      InterpreterContext * ctxt) 
+{
+  boost::gregorian::greg_year_month_day ymd = arg.year_month_day();
+  *ret = ymd.year*10000 + ymd.month*100 + ymd.day;
+}
+
+extern "C" void InternalInt32FromDatetime(boost::posix_time::ptime arg,
+					  int32_t * ret,
+					  InterpreterContext * ctxt) 
+{
+  InternalInt32FromDate(arg.date(), ret, ctxt);
+}
+
+extern "C" void InternalInt64FromVarchar(const Varchar * arg,
+					 int64_t * ret,
+					 InterpreterContext * ctxt) 
+{
+  *ret = std::strtoll(arg->Ptr, NULL, 10);
+}
+
+extern "C" void InternalInt64FromChar(const char * arg,
+				      int64_t * ret,
+				      InterpreterContext * ctxt) 
+{
+  *ret = std::strtoll(arg, NULL, 10);
+}
+
+extern "C" void InternalInt64FromDecimal(decimal128 * arg,
+					 int64_t * ret,
+					 InterpreterContext * ctxt) 
+{
+  decNumber a;
+  decimal128ToNumber(arg, &a);
+  char buf[100];
+  decNumber one;
+  decNumberFromInt32(&one, 1);
+  decNumber rounded;
+  decNumberQuantize(&rounded, &a, &one, ctxt->getDecimalContext());
+  *ret = decNumberToInt64(&rounded, ctxt->getDecimalContext());
+}
+
+extern "C" void InternalInt64FromDate(boost::gregorian::date arg,
+				      int64_t * ret,
+				      InterpreterContext * ctxt) 
+{
+  int32_t tmp;
+  InternalInt32FromDate(arg, &tmp, ctxt);
+  *ret = tmp;
+}
+
+extern "C" void InternalInt64FromDatetime(boost::posix_time::ptime arg,
+					  int64_t * ret,
+					  InterpreterContext * ctxt) 
+{
+  boost::gregorian::greg_year_month_day ymd = arg.date().year_month_day();
+  boost::posix_time::time_duration td = arg.time_of_day();
+  *ret = ymd.year*10000000000LL + ymd.month*100000000LL + ymd.day*1000000LL +
+    td.hours()*10000 + td.minutes()*100 + td.seconds();
 }
 
 extern "C" boost::gregorian::date InternalDateFromVarchar(Varchar* lhs) {
@@ -1097,6 +1224,106 @@ void LLVMBase::InitializeLLVM()
 			   numArguments, 
 			   0);
   libFunVal = ::LoadAndValidateExternalFunction(*this, "InternalVarcharFromDatetime", funTy);
+
+  numArguments = 0;
+  argumentTypes[numArguments++] = LLVMPointerType(mContext->LLVMVarcharType, 0);
+  argumentTypes[numArguments++] = LLVMPointerType(LLVMInt32TypeInContext(mContext->LLVMContext), 0);
+  argumentTypes[numArguments++] = mContext->LLVMDecContextPtrType;
+  funTy = LLVMFunctionType(LLVMVoidTypeInContext(mContext->LLVMContext), 
+			   &argumentTypes[0], 
+			   numArguments, 
+			   0);
+  libFunVal = ::LoadAndValidateExternalFunction(*this, "InternalInt32FromVarchar", funTy);
+
+  numArguments = 0;
+  argumentTypes[numArguments++] = LLVMPointerType(LLVMInt8TypeInContext(mContext->LLVMContext), 0);
+  argumentTypes[numArguments++] = LLVMPointerType(LLVMInt32TypeInContext(mContext->LLVMContext), 0);
+  argumentTypes[numArguments++] = mContext->LLVMDecContextPtrType;
+  funTy = LLVMFunctionType(LLVMVoidTypeInContext(mContext->LLVMContext), 
+			   &argumentTypes[0], 
+			   numArguments, 
+			   0);
+  libFunVal = ::LoadAndValidateExternalFunction(*this, "InternalInt32FromChar", funTy);
+
+  numArguments = 0;
+  argumentTypes[numArguments++] = LLVMPointerType(mContext->LLVMDecimal128Type, 0);
+  argumentTypes[numArguments++] = LLVMPointerType(LLVMInt32TypeInContext(mContext->LLVMContext), 0);
+  argumentTypes[numArguments++] = mContext->LLVMDecContextPtrType;
+  funTy = LLVMFunctionType(LLVMVoidTypeInContext(mContext->LLVMContext), 
+			   &argumentTypes[0], 
+			   numArguments, 
+			   0);
+  libFunVal = ::LoadAndValidateExternalFunction(*this, "InternalInt32FromDecimal", funTy);
+
+  numArguments = 0;
+  argumentTypes[numArguments++] = LLVMInt32TypeInContext(mContext->LLVMContext);
+  argumentTypes[numArguments++] = LLVMPointerType(LLVMInt32TypeInContext(mContext->LLVMContext), 0);
+  argumentTypes[numArguments++] = mContext->LLVMDecContextPtrType;
+  funTy = LLVMFunctionType(LLVMVoidTypeInContext(mContext->LLVMContext), 
+			   &argumentTypes[0], 
+			   numArguments, 
+			   0);
+  libFunVal = ::LoadAndValidateExternalFunction(*this, "InternalInt32FromDate", funTy);
+
+  numArguments = 0;
+  argumentTypes[numArguments++] = LLVMInt64TypeInContext(mContext->LLVMContext);
+  argumentTypes[numArguments++] = LLVMPointerType(LLVMInt32TypeInContext(mContext->LLVMContext), 0);
+  argumentTypes[numArguments++] = mContext->LLVMDecContextPtrType;
+  funTy = LLVMFunctionType(LLVMVoidTypeInContext(mContext->LLVMContext), 
+			   &argumentTypes[0], 
+			   numArguments, 
+			   0);
+  libFunVal = ::LoadAndValidateExternalFunction(*this, "InternalInt32FromDatetime", funTy);
+
+  numArguments = 0;
+  argumentTypes[numArguments++] = LLVMPointerType(mContext->LLVMVarcharType, 0);
+  argumentTypes[numArguments++] = LLVMPointerType(LLVMInt64TypeInContext(mContext->LLVMContext), 0);
+  argumentTypes[numArguments++] = mContext->LLVMDecContextPtrType;
+  funTy = LLVMFunctionType(LLVMVoidTypeInContext(mContext->LLVMContext), 
+			   &argumentTypes[0], 
+			   numArguments, 
+			   0);
+  libFunVal = ::LoadAndValidateExternalFunction(*this, "InternalInt64FromVarchar", funTy);
+
+  numArguments = 0;
+  argumentTypes[numArguments++] = LLVMPointerType(LLVMInt8TypeInContext(mContext->LLVMContext), 0);
+  argumentTypes[numArguments++] = LLVMPointerType(LLVMInt64TypeInContext(mContext->LLVMContext), 0);
+  argumentTypes[numArguments++] = mContext->LLVMDecContextPtrType;
+  funTy = LLVMFunctionType(LLVMVoidTypeInContext(mContext->LLVMContext), 
+			   &argumentTypes[0], 
+			   numArguments, 
+			   0);
+  libFunVal = ::LoadAndValidateExternalFunction(*this, "InternalInt64FromChar", funTy);
+
+  numArguments = 0;
+  argumentTypes[numArguments++] = LLVMPointerType(mContext->LLVMDecimal128Type, 0);
+  argumentTypes[numArguments++] = LLVMPointerType(LLVMInt64TypeInContext(mContext->LLVMContext), 0);
+  argumentTypes[numArguments++] = mContext->LLVMDecContextPtrType;
+  funTy = LLVMFunctionType(LLVMVoidTypeInContext(mContext->LLVMContext), 
+			   &argumentTypes[0], 
+			   numArguments, 
+			   0);
+  libFunVal = ::LoadAndValidateExternalFunction(*this, "InternalInt64FromDecimal", funTy);
+
+  numArguments = 0;
+  argumentTypes[numArguments++] = LLVMInt32TypeInContext(mContext->LLVMContext);
+  argumentTypes[numArguments++] = LLVMPointerType(LLVMInt64TypeInContext(mContext->LLVMContext), 0);
+  argumentTypes[numArguments++] = mContext->LLVMDecContextPtrType;
+  funTy = LLVMFunctionType(LLVMVoidTypeInContext(mContext->LLVMContext), 
+			   &argumentTypes[0], 
+			   numArguments, 
+			   0);
+  libFunVal = ::LoadAndValidateExternalFunction(*this, "InternalInt64FromDate", funTy);
+
+  numArguments = 0;
+  argumentTypes[numArguments++] = LLVMInt64TypeInContext(mContext->LLVMContext);
+  argumentTypes[numArguments++] = LLVMPointerType(LLVMInt64TypeInContext(mContext->LLVMContext), 0);
+  argumentTypes[numArguments++] = mContext->LLVMDecContextPtrType;
+  funTy = LLVMFunctionType(LLVMVoidTypeInContext(mContext->LLVMContext), 
+			   &argumentTypes[0], 
+			   numArguments, 
+			   0);
+  libFunVal = ::LoadAndValidateExternalFunction(*this, "InternalInt64FromDatetime", funTy);
 
   numArguments = 0;
   argumentTypes[numArguments++] = LLVMPointerType(mContext->LLVMVarcharType, 0);

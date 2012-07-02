@@ -240,7 +240,7 @@ $ty = NULL;
     | ^(c='<>' e1 = expression[$ctxt] e2 = expression[$ctxt] { $ty = IQLTypeCheckEquals($ctxt, e1.ty, e2.ty); $c->u = $ty; })
     | ^(TK_LIKE e1 = expression[$ctxt] e2 = expression[$ctxt])
     | ^(c=TK_RLIKE e1 = expression[$ctxt] e2 = expression[$ctxt] { $ty = IQLTypeCheckRLike($ctxt, e1.ty, e2.ty); $c->u = $ty; })
-    | ^(c='-' e1 = expression[$ctxt] (e2 = expression[$ctxt] { isBinary=1; })? { $ty = isBinary ? IQLTypeCheckAdditiveType($ctxt, e1.ty, e2.ty) : IQLTypeCheckNegateType($ctxt, e1.ty); $c->u = $ty; })
+    | ^(c='-' e1 = expression[$ctxt] (e2 = expression[$ctxt] { isBinary=1; })? { $ty = isBinary ? IQLTypeCheckSub($ctxt, e1.ty, e2.ty) : IQLTypeCheckNegateType($ctxt, e1.ty); $c->u = $ty; })
     | ^(c='+' e1 = expression[$ctxt] (e2 = expression[$ctxt] { isBinary=1; })? { $ty = isBinary ? IQLTypeCheckAdditiveType($ctxt, e1.ty, e2.ty) : IQLTypeCheckNegateType($ctxt, e1.ty); $c->u = $ty; })
     | ^(c='*' e1 = expression[$ctxt] e2 = expression[$ctxt] { $ty = IQLTypeCheckMultiplicativeType($ctxt, e1.ty, e2.ty); $c->u = $ty; })
     | ^(c='/' e1 = expression[$ctxt] e2 = expression[$ctxt] { $ty = IQLTypeCheckMultiplicativeType($ctxt, e1.ty, e2.ty); $c->u = $ty; })

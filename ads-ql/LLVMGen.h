@@ -428,6 +428,7 @@ extern "C" {
    * Type check additive operation and validate conversions as necessary.
    */
   IQLFieldTypeRef IQLTypeCheckAdditiveType(IQLTypeCheckContextRef ctxt, IQLFieldTypeRef lhs, IQLFieldTypeRef rhs);
+  IQLFieldTypeRef IQLTypeCheckSub(IQLTypeCheckContextRef ctxt, IQLFieldTypeRef lhs, IQLFieldTypeRef rhs);
   IQLFieldTypeRef IQLTypeCheckNegateType(IQLTypeCheckContextRef ctxt, IQLFieldTypeRef lhs);
   IQLFieldTypeRef IQLTypeCheckMultiplicativeType(IQLTypeCheckContextRef ctxt, IQLFieldTypeRef lhs, IQLFieldTypeRef rhs); 
   IQLFieldTypeRef IQLTypeCheckModulus(IQLTypeCheckContextRef ctxt, IQLFieldTypeRef lhs, IQLFieldTypeRef rhs);

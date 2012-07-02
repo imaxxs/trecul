@@ -3522,6 +3522,7 @@ BOOST_AUTO_TEST_CASE(testIQLIntervalTypes)
 			", CAST('2011-01-01 23:33:17' AS DATETIME) + INTERVAL 15 DAY AS m"
 			", a + interval 86402 seCOND AS n"
 			", INTERVAL -5 YEAR + a AS o"
+			", a - INTERVAL 5 YEAR AS p"
 			);
   
   // Actually execute this thing.  
@@ -3557,6 +3558,73 @@ BOOST_AUTO_TEST_CASE(testIQLIntervalTypes)
 		    t1.getTarget()->getFieldAddress("n").getDatetime(outputBuf));
   BOOST_CHECK_EQUAL(boost::posix_time::time_from_string("2006-02-17 15:38:33"),
 		    t1.getTarget()->getFieldAddress("o").getDatetime(outputBuf));
+  BOOST_CHECK_EQUAL(boost::posix_time::time_from_string("2006-02-17 15:38:33"),
+		    t1.getTarget()->getFieldAddress("p").getDatetime(outputBuf));
+}
+
+BOOST_AUTO_TEST_CASE(testIQLIntervalTypesNegative)
+{
+  DynamicRecordContext ctxt;
+  std::vector<RecordMember> members;
+  members.push_back(RecordMember("a", DatetimeType::Get(ctxt)));
+  boost::shared_ptr<RecordType> recordType(new RecordType(members));
+  
+  try {
+    RecordTypeTransfer t1(ctxt, "xfer1", recordType.get(), 
+			  "3 + INTERVAL 5 DAY AS b"
+			  );
+    BOOST_CHECK(false);
+  } catch (std::runtime_error& ex) {
+    std::cout << "Received expected expection: " << ex.what() << std::endl;
+  }
+  try {
+    RecordTypeTransfer t1(ctxt, "xfer1", recordType.get(), 
+			  "a + 3 AS b"
+			  );
+    BOOST_CHECK(false);
+  } catch (std::runtime_error& ex) {
+    std::cout << "Received expected expection: " << ex.what() << std::endl;
+  }
+  try {
+    RecordTypeTransfer t1(ctxt, "xfer1", recordType.get(), 
+			  "a + 3.0e+00 AS b"
+			  );
+    BOOST_CHECK(false);
+  } catch (std::runtime_error& ex) {
+    std::cout << "Received expected expection: " << ex.what() << std::endl;
+  }
+  try {
+    RecordTypeTransfer t1(ctxt, "xfer1", recordType.get(), 
+			  "3 - INTERVAL 5 DAY AS b"
+			  );
+    BOOST_CHECK(false);
+  } catch (std::runtime_error& ex) {
+    std::cout << "Received expected expection: " << ex.what() << std::endl;
+  }
+  try {
+    RecordTypeTransfer t1(ctxt, "xfer1", recordType.get(), 
+			  "a - 3 AS b"
+			  );
+    BOOST_CHECK(false);
+  } catch (std::runtime_error& ex) {
+    std::cout << "Received expected expection: " << ex.what() << std::endl;
+  }
+  try {
+    RecordTypeTransfer t1(ctxt, "xfer1", recordType.get(), 
+			  "a - 3.0e+00 AS b"
+			  );
+    BOOST_CHECK(false);
+  } catch (std::runtime_error& ex) {
+    std::cout << "Received expected expection: " << ex.what() << std::endl;
+  }
+  try {
+    RecordTypeTransfer t1(ctxt, "xfer1", recordType.get(), 
+			  "INTERVAL 5 DAY - a AS b"
+			  );
+    BOOST_CHECK(false);
+  } catch (std::runtime_error& ex) {
+    std::cout << "Received expected expection: " << ex.what() << std::endl;
+  }
 }
 
 BOOST_AUTO_TEST_CASE(testIQLIntervalTypesDate)
@@ -3581,6 +3649,7 @@ BOOST_AUTO_TEST_CASE(testIQLIntervalTypesDate)
 			", CAST('2011-01-01' AS DATE) + INTERVAL 15 DAY AS m"
 			", a + interval 86402 seCOND AS n"
 			", INTERVAL -5 YEAR + a AS o"
+			", a - INTERVAL 5 YEAR AS p"
 			);
   
   // Actually execute this thing.  
@@ -3614,6 +3683,8 @@ BOOST_AUTO_TEST_CASE(testIQLIntervalTypesDate)
 		    t1.getTarget()->getFieldAddress("n").getDatetime(outputBuf));
   BOOST_CHECK_EQUAL(boost::gregorian::from_string("2006-02-17"),
 		    t1.getTarget()->getFieldAddress("o").getDate(outputBuf));
+  BOOST_CHECK_EQUAL(boost::gregorian::from_string("2006-02-17"),
+		    t1.getTarget()->getFieldAddress("p").getDate(outputBuf));
 }
 
 BOOST_AUTO_TEST_CASE(testIQLRecordTransfer2Integers)
@@ -4189,6 +4260,142 @@ void testDatetimeCast(bool isNullable)
 BOOST_AUTO_TEST_CASE(testIQLDatetimeCast)
 {
   testDatetimeCast(false);
+}
+
+void testInt32Cast(bool isNullable)
+{
+  DynamicRecordContext ctxt;
+  InterpreterContext runtimeCtxt;
+  std::vector<RecordMember> members;
+  members.push_back(RecordMember("a", CharType::Get(ctxt, 10, isNullable)));
+  members.push_back(RecordMember("b", VarcharType::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("c", Int32Type::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("d", Int64Type::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("e", DoubleType::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("f", DecimalType::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("g", DatetimeType::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("h", DateType::Get(ctxt, isNullable)));
+  RecordType recTy(members);
+
+  RecordBuffer inputBuf = recTy.GetMalloc()->malloc();
+  recTy.setChar("a", "23444", inputBuf);
+  recTy.setVarchar("b", "-77142", inputBuf);
+  recTy.setInt32("c", 9923432, inputBuf);
+  recTy.setInt64("d", 1239923432, inputBuf);
+  recTy.setDouble("e", 8234.24344, inputBuf);
+  decimal128 dec;
+  ::decimal128FromString(&dec,
+			 "123456.8234", 
+			 runtimeCtxt.getDecimalContext());
+  recTy.getMemberOffset("f").setDecimal(dec, inputBuf);
+  boost::posix_time::ptime dt = boost::posix_time::time_from_string("2011-02-17 15:38:33");
+  recTy.setDatetime("g", dt, inputBuf);
+  boost::gregorian::date d = boost::gregorian::from_string("2011-02-22");
+  recTy.setDate("h", d, inputBuf);
+
+  {
+    RecordTypeTransfer t1(ctxt, "xfer1", &recTy, 
+			  "CAST(a AS INTEGER) AS a"
+			  ", CAST(b AS INTEGER) AS b"
+			  ", CAST(c AS INTEGER) AS c"
+			  ", CAST(d AS INTEGER) AS d"
+			  ", CAST(e AS INTEGER) AS e"
+			  ", CAST(f AS INTEGER) AS f"
+			  ", CAST(g AS INTEGER) AS g"
+			  ", CAST(h AS INTEGER) AS h"
+			  );
+    for(RecordType::const_member_iterator it = t1.getTarget()->begin_members();
+	it != t1.getTarget()->end_members();
+	++it) {
+      BOOST_CHECK_EQUAL(FieldType::INT32, it->GetType()->GetEnum());
+      BOOST_CHECK_EQUAL(isNullable, it->GetType()->isNullable());
+    }
+    RecordBuffer outputBuf = t1.getTarget()->GetMalloc()->malloc();
+    InterpreterContext runtimeCtxt;
+    t1.execute(inputBuf, outputBuf, &runtimeCtxt, false);
+    BOOST_CHECK_EQUAL(23444, t1.getTarget()->getInt32("a", outputBuf));
+    BOOST_CHECK_EQUAL(-77142, t1.getTarget()->getInt32("b", outputBuf));
+    BOOST_CHECK_EQUAL(9923432, t1.getTarget()->getInt32("c", outputBuf));
+    BOOST_CHECK_EQUAL(1239923432, t1.getTarget()->getInt32("d", outputBuf));
+    BOOST_CHECK_EQUAL(8234, t1.getTarget()->getInt32("e", outputBuf));
+    BOOST_CHECK_EQUAL(123457, t1.getTarget()->getInt32("f", outputBuf));
+    BOOST_CHECK_EQUAL(20110217, t1.getTarget()->getInt32("g", outputBuf));
+    BOOST_CHECK_EQUAL(20110222, t1.getTarget()->getInt32("h", outputBuf));
+    t1.getTarget()->getFree().free(outputBuf);
+  }
+}
+
+BOOST_AUTO_TEST_CASE(testIQLInt32Cast)
+{
+  testInt32Cast(false);
+}
+
+void testInt64Cast(bool isNullable)
+{
+  DynamicRecordContext ctxt;
+  InterpreterContext runtimeCtxt;
+  std::vector<RecordMember> members;
+  members.push_back(RecordMember("a", CharType::Get(ctxt, 12, isNullable)));
+  members.push_back(RecordMember("b", VarcharType::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("c", Int32Type::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("d", Int64Type::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("e", DoubleType::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("f", DecimalType::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("g", DatetimeType::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("h", DateType::Get(ctxt, isNullable)));
+  RecordType recTy(members);
+
+  RecordBuffer inputBuf = recTy.GetMalloc()->malloc();
+  recTy.setChar("a", "233444772354", inputBuf);
+  recTy.setVarchar("b", "-77142", inputBuf);
+  recTy.setInt32("c", 9923432, inputBuf);
+  recTy.setInt64("d", 1239923432, inputBuf);
+  recTy.setDouble("e", 8234.24344, inputBuf);
+  decimal128 dec;
+  ::decimal128FromString(&dec,
+			 "123456.8234", 
+			 runtimeCtxt.getDecimalContext());
+  recTy.getMemberOffset("f").setDecimal(dec, inputBuf);
+  boost::posix_time::ptime dt = boost::posix_time::time_from_string("2011-02-17 15:38:33");
+  recTy.setDatetime("g", dt, inputBuf);
+  boost::gregorian::date d = boost::gregorian::from_string("2011-02-22");
+  recTy.setDate("h", d, inputBuf);
+
+  {
+    RecordTypeTransfer t1(ctxt, "xfer1", &recTy, 
+			  "CAST(a AS BIGINT) AS a"
+			  ", CAST(b AS BIGINT) AS b"
+			  ", CAST(c AS BIGINT) AS c"
+			  ", CAST(d AS BIGINT) AS d"
+			  ", CAST(e AS BIGINT) AS e"
+			  ", CAST(f AS BIGINT) AS f"
+			  ", CAST(g AS BIGINT) AS g"
+			  ", CAST(h AS BIGINT) AS h"
+			  );
+    for(RecordType::const_member_iterator it = t1.getTarget()->begin_members();
+	it != t1.getTarget()->end_members();
+	++it) {
+      BOOST_CHECK_EQUAL(FieldType::INT64, it->GetType()->GetEnum());
+      BOOST_CHECK_EQUAL(isNullable, it->GetType()->isNullable());
+    }
+    RecordBuffer outputBuf = t1.getTarget()->GetMalloc()->malloc();
+    InterpreterContext runtimeCtxt;
+    t1.execute(inputBuf, outputBuf, &runtimeCtxt, false);
+    BOOST_CHECK_EQUAL(233444772354LL, t1.getTarget()->getInt64("a", outputBuf));
+    BOOST_CHECK_EQUAL(-77142, t1.getTarget()->getInt64("b", outputBuf));
+    BOOST_CHECK_EQUAL(9923432, t1.getTarget()->getInt64("c", outputBuf));
+    BOOST_CHECK_EQUAL(1239923432, t1.getTarget()->getInt64("d", outputBuf));
+    BOOST_CHECK_EQUAL(8234, t1.getTarget()->getInt64("e", outputBuf));
+    BOOST_CHECK_EQUAL(123457, t1.getTarget()->getInt64("f", outputBuf));
+    BOOST_CHECK_EQUAL(20110217153833LL, t1.getTarget()->getInt64("g", outputBuf));
+    BOOST_CHECK_EQUAL(20110222, t1.getTarget()->getInt64("h", outputBuf));
+    t1.getTarget()->getFree().free(outputBuf);
+  }
+}
+
+BOOST_AUTO_TEST_CASE(testIQLInt64Cast)
+{
+  testInt64Cast(false);
 }
 
 void testVarcharCast(bool isNullable)
