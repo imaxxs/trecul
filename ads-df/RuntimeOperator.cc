@@ -1477,8 +1477,15 @@ void RuntimeSortGroupByOperator::onEvent(RuntimePort * port)
 {
   switch(mState) {
   case START:
-    // TODO: If this is GROUP ALL then initialize aggregate record here (to
-    // make sure we have an output even without inputs).
+    if (NULL == getSortGroupByType().mEqFun) {
+      // No group keys specified.  Create an aggregate state record
+      mCurrentAggregate = RecordBuffer::create();
+      // No need for an input record because no keys
+      RecordBuffer tmp;
+      getSortGroupByType().mAggregate->executeInit(tmp, 
+						   mCurrentAggregate, 
+						   mRuntimeContext);
+    }
     while(true) {
       // Read all inputs
       requestRead(0);
@@ -1488,11 +1495,10 @@ void RuntimeSortGroupByOperator::onEvent(RuntimePort * port)
       {
 	read(port, mInput);
 
-	// TODO: Proper behavior of GROUP ALL on empty
-	// input stream.
 	if (RecordBuffer::isEOS(mInput) || 
 	    mCurrentAggregate == RecordBuffer() ||
-	    !getSortGroupByType().mEqFun->execute(mCurrentAggregate, mInput, mRuntimeContext)) {
+	    (getSortGroupByType().mEqFun != NULL &&
+	     !getSortGroupByType().mEqFun->execute(mCurrentAggregate, mInput, mRuntimeContext))) {
 	  // If table is not empty, then we output the accumulated record
 	  if (mCurrentAggregate != RecordBuffer()) {
 	    requestWrite(0);

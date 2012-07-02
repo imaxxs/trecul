@@ -1,0 +1,7 @@
+g = generate[output="RECORDCOUNT AS a", numRecords = 20];
+
+h = sort_group_by[output="MAX(a) AS max_a, MIN(a) AS min_a, SUM(a) AS a"];
+g -> h; 
+
+w = write[file="output.txt", mode="text"];
+h -> w;

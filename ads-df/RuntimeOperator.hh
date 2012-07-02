@@ -1594,7 +1594,7 @@ public:
     mFree(freeFunctor),
     mAggregateFree(agg->getAggregate()->getFree()),
     mAggregate(agg->create()),
-    mEqFun(eqFun->create())
+    mEqFun(eqFun != NULL ? eqFun->create() : NULL)
   {
   }
   ~RuntimeSortGroupByOperatorType()
@@ -1662,7 +1662,7 @@ public:
     mFree(freeFunctor),
     mAggregateFree(agg->getAggregate()->getFree()),
     mAggregate(agg->create()),
-    mEqFun(eqFun->create())
+    mEqFun(eqFun != NULL ? eqFun->create() : NULL)
   {
   }
   ~RuntimeSortRunningTotalOperatorType()
