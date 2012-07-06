@@ -916,13 +916,13 @@ CodeGenerationContext::buildSub(const IQLToLLVMValue * lhs,
     rhs = unwrap(cvt.getRHS());
     llvm::Value * e1 = llvm::unwrap(lhs->getValue());
     llvm::Value * e2 = llvm::unwrap(rhs->getValue());
-    if (lhsType->isIntegral()) {
+    if (retType->isIntegral()) {
       b->CreateStore(b->CreateSub(e1, e2), ret);
       return IQLToLLVMValue::eLocal;
-    } else if (lhsType->isFloatingPoint()) {
+    } else if (retType->isFloatingPoint()) {
       b->CreateStore(b->CreateFSub(e1, e2), ret);
       return IQLToLLVMValue::eLocal;
-    } else if (lhsType->GetEnum() == FieldType::BIGDECIMAL) {
+    } else if (retType->GetEnum() == FieldType::BIGDECIMAL) {
       /* call the decimal add library function */
       /* for decimal types we are getting alloca pointers in our expressions */
       return IQLToLLVMCreateBinaryDecimalCall(this, wrap(lhs), wrap(rhs), llvm::wrap(ret), iqlOpDecMinus);     

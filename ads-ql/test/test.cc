@@ -66,6 +66,94 @@ boost::shared_ptr<RecordType> createLogInputType(DynamicRecordContext & ctxt)
   return boost::shared_ptr<RecordType> (new RecordType(members));
 }
 
+void ImplicitCastInt32ToDouble(bool int32Nullable, bool doubleNullable)
+{
+  DynamicRecordContext ctxt;
+  InterpreterContext runtimeCtxt;
+  std::vector<RecordMember> members;
+  members.push_back(RecordMember("a", DoubleType::Get(ctxt, doubleNullable)));
+  members.push_back(RecordMember("b", Int32Type::Get(ctxt, int32Nullable)));
+  RecordType recTy(members);
+
+  bool resultNullable = int32Nullable || doubleNullable;
+  RecordBuffer inputBuf = recTy.GetMalloc()->malloc();
+  recTy.setDouble("a", 8234.24344, inputBuf);
+  recTy.setInt32("b", 99, inputBuf);
+
+  RecordTypeTransfer t1(ctxt, "xfer1", &recTy, 
+			"b + a AS c"
+			", b - a AS d"
+			", b*a AS e"
+			", b/a AS f"
+			", a+b AS g"
+			", a-b AS h"
+			", a*b AS i"
+			", a/b AS j"
+			);
+  
+  RecordBuffer outputBuf = t1.getTarget()->GetMalloc()->malloc();
+  t1.execute(inputBuf, outputBuf, &runtimeCtxt, false);  
+  BOOST_CHECK_EQUAL(FieldType::DOUBLE, 
+		    t1.getTarget()->getMember("c").GetType()->GetEnum());
+  BOOST_CHECK_EQUAL(resultNullable, 
+		    t1.getTarget()->getMember("c").GetType()->isNullable());
+  BOOST_CHECK_EQUAL(99 + 8234.24344, 
+		    t1.getTarget()->getFieldAddress("c").getDouble(outputBuf));
+  BOOST_CHECK_EQUAL(FieldType::DOUBLE, 
+		    t1.getTarget()->getMember("d").GetType()->GetEnum());
+  BOOST_CHECK_EQUAL(resultNullable, 
+		    t1.getTarget()->getMember("d").GetType()->isNullable());
+  BOOST_CHECK_EQUAL(99 - 8234.24344, 
+		    t1.getTarget()->getFieldAddress("d").getDouble(outputBuf));
+  BOOST_CHECK_EQUAL(FieldType::DOUBLE, 
+		    t1.getTarget()->getMember("e").GetType()->GetEnum());
+  BOOST_CHECK_EQUAL(resultNullable, 
+		    t1.getTarget()->getMember("e").GetType()->isNullable());
+  BOOST_CHECK_EQUAL(99 * 8234.24344, 
+		    t1.getTarget()->getFieldAddress("e").getDouble(outputBuf));
+  BOOST_CHECK_EQUAL(FieldType::DOUBLE, 
+		    t1.getTarget()->getMember("f").GetType()->GetEnum());
+  BOOST_CHECK_EQUAL(resultNullable, 
+		    t1.getTarget()->getMember("f").GetType()->isNullable());
+  BOOST_CHECK_EQUAL(99 / 8234.24344, 
+		    t1.getTarget()->getFieldAddress("f").getDouble(outputBuf));
+  BOOST_CHECK_EQUAL(FieldType::DOUBLE, 
+		    t1.getTarget()->getMember("g").GetType()->GetEnum());
+  BOOST_CHECK_EQUAL(resultNullable, 
+		    t1.getTarget()->getMember("g").GetType()->isNullable());
+  BOOST_CHECK_EQUAL(99 + 8234.24344, 
+		    t1.getTarget()->getFieldAddress("g").getDouble(outputBuf));
+  BOOST_CHECK_EQUAL(FieldType::DOUBLE, 
+		    t1.getTarget()->getMember("h").GetType()->GetEnum());
+  BOOST_CHECK_EQUAL(resultNullable, 
+		    t1.getTarget()->getMember("h").GetType()->isNullable());
+  BOOST_CHECK_EQUAL(8234.24344 - 99, 
+		    t1.getTarget()->getFieldAddress("h").getDouble(outputBuf));
+  BOOST_CHECK_EQUAL(FieldType::DOUBLE, 
+		    t1.getTarget()->getMember("i").GetType()->GetEnum());
+  BOOST_CHECK_EQUAL(resultNullable, 
+		    t1.getTarget()->getMember("i").GetType()->isNullable());
+  BOOST_CHECK_EQUAL(99 * 8234.24344, 
+		    t1.getTarget()->getFieldAddress("i").getDouble(outputBuf));
+  BOOST_CHECK_EQUAL(FieldType::DOUBLE, 
+		    t1.getTarget()->getMember("j").GetType()->GetEnum());
+  BOOST_CHECK_EQUAL(resultNullable, 
+		    t1.getTarget()->getMember("j").GetType()->isNullable());
+  BOOST_CHECK_EQUAL(8234.24344 / 99, 
+		    t1.getTarget()->getFieldAddress("j").getDouble(outputBuf));
+  
+  recTy.getFree().free(inputBuf);
+  t1.getTarget()->getFree().free(outputBuf);
+}
+
+BOOST_AUTO_TEST_CASE(testImplicitCastInt32ToDouble)
+{
+  ImplicitCastInt32ToDouble(false, false);
+  ImplicitCastInt32ToDouble(false, true);
+  ImplicitCastInt32ToDouble(true, false);
+  ImplicitCastInt32ToDouble(true, true);
+}
+
 // Test for our AST that will replace ANTLR3 ASTs and
 // ANTLR3 tree walking.
 BOOST_AUTO_TEST_CASE(testNativeAST)
