@@ -38,6 +38,7 @@
 #include <boost/format.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/algorithm/string/predicate.hpp>
+#include <boost/algorithm/string/replace.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include "LLVMGen.h"
 #include "CodeGenerationContext.hh"
@@ -3187,6 +3188,14 @@ IQLToLLVMValueRef IQLToLLVMBuildVarcharLiteral(IQLCodeGenerationContextRef ctxtR
   
   std::string str(val);
   str = str.substr(1, str.size()-2);
+  // Unescape stuff
+  boost::replace_all(str, "\\\\", "\\");
+  boost::replace_all(str, "\\b", "\b");
+  boost::replace_all(str, "\\t", "\t");
+  boost::replace_all(str, "\\n", "\n");
+  boost::replace_all(str, "\\f", "\f");
+  boost::replace_all(str, "\\r", "\r");
+  boost::replace_all(str, "\\'", "'");
 
   // Put the string in as a global variable and then create a struct that references it.  
   // This is the global variable itself

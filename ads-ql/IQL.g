@@ -600,7 +600,7 @@ DOUBLE_QUOTED_STRING_LITERAL
 
 fragment
 ESCAPE_SEQUENCE
-    :   '\\' ('b'|'t'|'n'|'f'|'r'|'\"'|'\''|'\\')
+    :   '\\' ('b'|'t'|'n'|'f'|'r'|'B'|'T'|'N'|'F'|'R'|'\"'|'\''|'\\')
     |   UNICODE_ESCAPE
     |   OCTAL_ESCAPE
     ;

@@ -6149,11 +6149,51 @@ BOOST_AUTO_TEST_CASE(testIQLRLike)
   BOOST_CHECK(!iql_rlike_match("a+", "b"));
 
   BOOST_CHECK(iql_rlike_match("(?i)a+", "AAA"));
+  BOOST_CHECK(iql_rlike_match("a[0-9]+b", "a89234b"));
+  BOOST_CHECK(iql_rlike_match("a\\d+b", "a89234b"));
 
   BOOST_CHECK(!iql_rlike_is_null("a", "a"));
   BOOST_CHECK(iql_rlike_is_null(NULL, "a"));
   BOOST_CHECK(iql_rlike_is_null("a", NULL));
   BOOST_CHECK(iql_rlike_is_null(NULL, NULL));
+}
+
+
+BOOST_AUTO_TEST_CASE(testStringLiteralEscapes)
+{
+  DynamicRecordContext ctxt;
+  std::vector<RecordMember> members;
+  RecordType recTy(members);
+  RecordTypeTransfer t1(ctxt, "xfer1", &recTy, 
+			"'noescapes' AS a"
+			", 'esc\\nape' AS b"
+			", 'esc\\bape' AS c"
+			", 'esc\\\\ape' AS d"
+			", 'esc\\tape' AS e"
+			", 'esc\\rape' AS f"
+			", 'esc\\'ape' AS g"
+			);
+  
+  InterpreterContext runtimeCtxt;
+  RecordBuffer inputBuf = recTy.GetMalloc()->malloc();
+  RecordBuffer outputBuf = t1.getTarget()->GetMalloc()->malloc();
+  t1.execute(inputBuf, outputBuf, &runtimeCtxt, false);  
+  BOOST_CHECK(boost::algorithm::equals("noescapes",
+				       t1.getTarget()->getFieldAddress("a").getVarcharPtr(outputBuf)->Ptr));
+  BOOST_CHECK(boost::algorithm::equals("esc\nape",
+				       t1.getTarget()->getFieldAddress("b").getVarcharPtr(outputBuf)->Ptr));
+  BOOST_CHECK(boost::algorithm::equals("esc\bape",
+				       t1.getTarget()->getFieldAddress("c").getVarcharPtr(outputBuf)->Ptr));
+  BOOST_CHECK(boost::algorithm::equals("esc\\ape",
+				       t1.getTarget()->getFieldAddress("d").getVarcharPtr(outputBuf)->Ptr));
+  BOOST_CHECK(boost::algorithm::equals("esc\tape",
+				       t1.getTarget()->getFieldAddress("e").getVarcharPtr(outputBuf)->Ptr));
+  BOOST_CHECK(boost::algorithm::equals("esc\rape",
+				       t1.getTarget()->getFieldAddress("f").getVarcharPtr(outputBuf)->Ptr));
+  BOOST_CHECK(boost::algorithm::equals("esc'ape",
+				       t1.getTarget()->getFieldAddress("g").getVarcharPtr(outputBuf)->Ptr));
+  recTy.getFree().free(inputBuf);
+  t1.getTarget()->getFree().free(outputBuf);
 }
 
 
