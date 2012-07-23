@@ -1392,7 +1392,6 @@ IQLToLLVMValue::ValueType IQLToLLVMBuildCastInt32(CodeGenerationContext * ctxt, 
 			      llvm::unwrap(ret), retAttrs);
 }
 
-// TODO: Support all directions of casting.
 IQLToLLVMValueRef IQLToLLVMBuildCastInt32(CodeGenerationContext * ctxt, IQLToLLVMValueRef e, void * argAttrs, void * retAttrs)
 {
   const FieldType * lhsType = (const FieldType *) argAttrs;
@@ -1401,7 +1400,6 @@ IQLToLLVMValueRef IQLToLLVMBuildCastInt32(CodeGenerationContext * ctxt, IQLToLLV
 				       IQLToLLVMBuildCastInt32);
 }
 
-// TODO: Support all directions of casting.
 IQLToLLVMValue::ValueType IQLToLLVMBuildCastInt64(CodeGenerationContext * ctxt, 
 						  IQLToLLVMValueRef e, 
 						  const FieldType * argAttrs, 
@@ -1428,20 +1426,45 @@ IQLToLLVMValueRef IQLToLLVMBuildCastBoolean(CodeGenerationContext * ctxt, IQLToL
   throw std::runtime_error ("CAST(expr TO BOOLEAN) not implemented yet");
 }
 
-// TODO: Support all directions of casting.
-IQLToLLVMValueRef IQLToLLVMBuildCastDecimal(CodeGenerationContext * ctxt, IQLToLLVMValueRef e, void * argAttrs, void * retAttrs)
+IQLToLLVMValue::ValueType IQLToLLVMBuildCastDecimal(CodeGenerationContext * ctxt, 
+						    IQLToLLVMValueRef e, 
+						    const FieldType * argAttrs, 
+						    LLVMValueRef ret, 
+						    const FieldType * retAttrs)
 {
-  throw std::runtime_error ("CAST(expr TO DECIMAL) not implemented yet");
+  return ctxt->buildCastDecimal(unwrap(e), argAttrs, 
+				llvm::unwrap(ret), retAttrs);
 }
 
-// TODO: Support all directions of casting.
+IQLToLLVMValueRef IQLToLLVMBuildCastDecimal(CodeGenerationContext * ctxt, 
+					    IQLToLLVMValueRef e, 
+					    void * argAttrs, void * retAttrs)
+{
+  const FieldType * lhsType = (const FieldType *) argAttrs;
+  const FieldType * resultType = (const FieldType *) retAttrs;
+  return IQLToLLVMBuildNullableUnaryOp(ctxt, e, lhsType, resultType,
+				       IQLToLLVMBuildCastDecimal);
+}
+
+IQLToLLVMValue::ValueType IQLToLLVMBuildCastDouble(CodeGenerationContext * ctxt, 
+						  IQLToLLVMValueRef e, 
+						  const FieldType * argAttrs, 
+						  LLVMValueRef ret, 
+						  const FieldType * retAttrs)
+{
+  return ctxt->buildCastDouble(unwrap(e), argAttrs, 
+			       llvm::unwrap(ret), retAttrs);
+}
+
 IQLToLLVMValueRef IQLToLLVMBuildCastDouble(CodeGenerationContext * ctxt, IQLToLLVMValueRef e, void * argAttrs, void * retAttrs)
 {
-  throw std::runtime_error ("CAST(expr TO DOUBLE PRECISION) not implemented yet");
+  const FieldType * lhsType = (const FieldType *) argAttrs;
+  const FieldType * resultType = (const FieldType *) retAttrs;
+  return IQLToLLVMBuildNullableUnaryOp(ctxt, e, lhsType, resultType,
+				       IQLToLLVMBuildCastDouble);
 }
 
 // TODO: Support all directions of casting.
-// TODO: Distinguish date from int32
 IQLToLLVMValueRef IQLToLLVMBuildCast(IQLCodeGenerationContextRef ctxtRef, 
 				     IQLToLLVMValueRef e, 
 				     void * argAttrs, void * retAttrs)
@@ -1755,6 +1778,7 @@ IQLToLLVMValue::ValueType IQLToLLVMBuildAdd(CodeGenerationContext * ctxt,
   } else if (retType->GetEnum() == FieldType::VARCHAR) {
     return IQLToLLVMCreateBinaryVarcharCall(ctxt, lhs, rhs, ret, iqlOpVarcharPlus);
   } else {
+    llvm::unwrap(e1)->getType()->dump();
     throw std::runtime_error("INTERNAL ERROR: Invalid Type");
   }
 }
@@ -3790,11 +3814,14 @@ IQLFieldTypeRef IQLTypeCheckNegateType(IQLTypeCheckContextRef ctxtRef, IQLFieldT
 IQLFieldTypeRef IQLTypeCheckMultiplicativeType(IQLTypeCheckContextRef ctxtRef, IQLFieldTypeRef lhs, IQLFieldTypeRef rhs)
 {
   TypeCheckContext * ctxt = unwrap(ctxtRef);
+  const FieldType * lhsType = unwrap(lhs);
+  const FieldType * rhsType = unwrap(rhs);
   // TODO: Implement proper checking for supported types here.
   IQLFieldTypeRef ty = 
     IQLTypeCheckBinaryConversion::leastCommonTypeNullable(ctxt, lhs, rhs);
   if (ty == NULL)
-    throw std::runtime_error("Type check error");
+    throw std::runtime_error((boost::format("Cannot multiply types %1% and %2%") %
+			      lhsType->toString() % rhsType->toString()).str());
   return ty;
 }
 

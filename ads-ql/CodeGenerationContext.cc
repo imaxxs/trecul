@@ -894,6 +894,109 @@ CodeGenerationContext::buildCastInt64(const IQLToLLVMValue * e,
 }
 
 IQLToLLVMValue::ValueType 
+CodeGenerationContext::buildCastDouble(const IQLToLLVMValue * e, 
+				       const FieldType * argAttrs, 
+				       llvm::Value * ret, 
+				       const FieldType * retAttrs)
+{
+  llvm::Value * e1 = llvm::unwrap(e->getValue());
+  llvm::LLVMContext * c = llvm::unwrap(LLVMContext);
+  llvm::IRBuilder<> * b = llvm::unwrap(LLVMBuilder);
+  std::vector<const IQLToLLVMValue *> args;
+  args.push_back(e);
+
+  switch(argAttrs->GetEnum()) {
+  case FieldType::INT32:
+  case FieldType::INT64:
+    {
+      llvm::Value * r = b->CreateSIToFP(e1, 
+					b->getDoubleTy(),
+					"castIntToDouble");
+      b->CreateStore(r, ret);
+      return IQLToLLVMValue::eLocal;
+    }
+  case FieldType::DOUBLE:
+    b->CreateStore(e1, ret);
+    return IQLToLLVMValue::eLocal;
+  case FieldType::CHAR:
+    {
+      return buildCall("InternalDoubleFromChar", args, ret, retAttrs);
+    }
+  case FieldType::VARCHAR:
+    {
+      return buildCall("InternalDoubleFromVarchar", args, ret, retAttrs);
+    }
+  case FieldType::BIGDECIMAL:
+    {
+      return buildCall("InternalDoubleFromDecimal", args, ret, retAttrs);
+    }
+  case FieldType::DATE:
+    {
+      return buildCall("InternalDoubleFromDate", args, ret, retAttrs);
+    }
+  case FieldType::DATETIME:
+    {
+      return buildCall("InternalDoubleFromDatetime", args, ret, retAttrs);
+    }
+  default:
+    throw std::runtime_error ((boost::format("Cast to DOUBLE PRECISION from %1% not "
+					     "implemented.") % 
+			       retAttrs->toString()).str());
+  }
+}
+
+IQLToLLVMValue::ValueType 
+CodeGenerationContext::buildCastDecimal(const IQLToLLVMValue * e, 
+				       const FieldType * argAttrs, 
+				       llvm::Value * ret, 
+				       const FieldType * retAttrs)
+{
+  llvm::Value * e1 = llvm::unwrap(e->getValue());
+  llvm::LLVMContext * c = llvm::unwrap(LLVMContext);
+  llvm::IRBuilder<> * b = llvm::unwrap(LLVMBuilder);
+  std::vector<const IQLToLLVMValue *> args;
+  args.push_back(e);
+
+  switch(argAttrs->GetEnum()) {
+  case FieldType::INT32:
+    {
+      return buildCall("InternalDecimalFromInt32", args, ret, retAttrs);
+    }
+  case FieldType::INT64:
+    {
+      return buildCall("InternalDecimalFromInt64", args, ret, retAttrs);
+    }
+  case FieldType::DOUBLE:
+    {
+      return buildCall("InternalDecimalFromDouble", args, ret, retAttrs);
+    }
+  case FieldType::CHAR:
+    {
+      return buildCall("InternalDecimalFromChar", args, ret, retAttrs);
+    }
+  case FieldType::VARCHAR:
+    {
+      return buildCall("InternalDecimalFromVarchar", args, ret, retAttrs);
+    }
+  case FieldType::BIGDECIMAL:
+    b->CreateStore(b->CreateLoad(e1), ret);
+    return e->getValueType();
+  case FieldType::DATE:
+    {
+      return buildCall("InternalDecimalFromDate", args, ret, retAttrs);
+    }
+  case FieldType::DATETIME:
+    {
+      return buildCall("InternalDecimalFromDatetime", args, ret, retAttrs);
+    }
+  default:
+    throw std::runtime_error ((boost::format("Cast to DECIMAL from %1% not "
+					     "implemented.") % 
+			       retAttrs->toString()).str());
+  }
+}
+
+IQLToLLVMValue::ValueType 
 CodeGenerationContext::buildSub(const IQLToLLVMValue * lhs, 
 				const FieldType * lhsType, 
 				const IQLToLLVMValue * rhs, 
@@ -1060,6 +1163,25 @@ IQLToLLVMValueRef IQLToLLVMBinaryConversion::convertIntToDec(CodeGenerationConte
 			     IQLToLLVMValue::eLocal);
 }
 
+IQLToLLVMValueRef IQLToLLVMBinaryConversion::convertDecToDouble(CodeGenerationContext * ctxt,
+								LLVMValueRef llvmVal)
+{
+  LLVMValueRef callArgs[3];
+  LLVMValueRef fn = LLVMGetNamedFunction(ctxt->LLVMModule, "InternalDoubleFromDecimal");
+  callArgs[0] = llvmVal;
+  callArgs[1] = LLVMCreateEntryBlockAlloca(ctxt, 
+					   LLVMDoubleTypeInContext(ctxt->LLVMContext), 
+					   "retDecToDouble");
+  callArgs[2] = LLVMBuildLoad(ctxt->LLVMBuilder, 
+			      ctxt->getContextArgumentRef(),
+			      "ctxttmp");
+  LLVMBuildCall(ctxt->LLVMBuilder, fn, &callArgs[0], 3, "");
+  return IQLToLLVMValue::get(ctxt, 
+			     LLVMBuildLoad(ctxt->LLVMBuilder,
+					   callArgs[1], "retDecToDoubleResult"),
+			     IQLToLLVMValue::eLocal);
+}
+
 /**
  * Can e1 be cast to e2?
  */
@@ -1082,6 +1204,13 @@ LLVMTypeRef IQLToLLVMBinaryConversion::castTo(CodeGenerationContext * ctxt, LLVM
     else if (e2 == LLVMDoubleTypeInContext(ctxt->LLVMContext))
       return e2;
     else if (e2 == LLVMPointerType(ctxt->LLVMDecimal128Type, 0))
+      return e2;
+    else 
+      return NULL;    
+  } else if (e1 == LLVMPointerType(ctxt->LLVMDecimal128Type, 0)) {
+    if (e2 == LLVMPointerType(ctxt->LLVMDecimal128Type, 0))
+      return e2;
+    else if (e2 == LLVMDoubleTypeInContext(ctxt->LLVMContext))
       return e2;
     else 
       return NULL;    
@@ -1160,6 +1289,12 @@ IQLToLLVMValueRef IQLToLLVMBinaryConversion::convertTo(CodeGenerationContext * c
 				 IQLToLLVMValue::eLocal);
     } else if (e2 == LLVMPointerType(ctxt->LLVMDecimal128Type, 0)) {
       return convertIntToDec(ctxt, llvmVal, true);
+    } else {
+      return NULL; 
+    }   
+  } else if (e1 == LLVMPointerType(ctxt->LLVMDecimal128Type, 0)) {
+    if (e2 == LLVMDoubleTypeInContext(ctxt->LLVMContext)) {
+      return convertDecToDouble(ctxt, llvmVal);
     } else {
       return NULL; 
     }   

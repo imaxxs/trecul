@@ -154,6 +154,98 @@ BOOST_AUTO_TEST_CASE(testImplicitCastInt32ToDouble)
   ImplicitCastInt32ToDouble(true, true);
 }
 
+void ImplicitCastDecimalToDouble(bool decimalNullable, bool doubleNullable)
+{
+  DynamicRecordContext ctxt;
+  InterpreterContext runtimeCtxt;
+  std::vector<RecordMember> members;
+  members.push_back(RecordMember("a", DoubleType::Get(ctxt, doubleNullable)));
+  members.push_back(RecordMember("b", DecimalType::Get(ctxt, decimalNullable)));
+  RecordType recTy(members);
+
+  bool resultNullable = decimalNullable || doubleNullable;
+  RecordBuffer inputBuf = recTy.GetMalloc()->malloc();
+  recTy.setDouble("a", 8234.24344, inputBuf);  
+  ::decimal128FromString(recTy.getMemberOffset("b").getDecimalPtr(inputBuf), 
+			 "99", 
+			 runtimeCtxt.getDecimalContext());
+  if (decimalNullable)
+    recTy.getFieldAddress("b").clearNull(inputBuf);
+
+  RecordTypeTransfer t1(ctxt, "xfer1", &recTy, 
+			"b + a AS c"
+			", b - a AS d"
+			", b*a AS e"
+			", b/a AS f"
+			", a+b AS g"
+			", a-b AS h"
+			", a*b AS i"
+			", a/b AS j"
+			);
+  
+  RecordBuffer outputBuf = t1.getTarget()->GetMalloc()->malloc();
+  t1.execute(inputBuf, outputBuf, &runtimeCtxt, false);  
+  BOOST_CHECK_EQUAL(FieldType::DOUBLE, 
+		    t1.getTarget()->getMember("c").GetType()->GetEnum());
+  BOOST_CHECK_EQUAL(resultNullable, 
+		    t1.getTarget()->getMember("c").GetType()->isNullable());
+  BOOST_CHECK_EQUAL(99 + 8234.24344, 
+		    t1.getTarget()->getFieldAddress("c").getDouble(outputBuf));
+  BOOST_CHECK_EQUAL(FieldType::DOUBLE, 
+		    t1.getTarget()->getMember("d").GetType()->GetEnum());
+  BOOST_CHECK_EQUAL(resultNullable, 
+		    t1.getTarget()->getMember("d").GetType()->isNullable());
+  BOOST_CHECK_EQUAL(99 - 8234.24344, 
+		    t1.getTarget()->getFieldAddress("d").getDouble(outputBuf));
+  BOOST_CHECK_EQUAL(FieldType::DOUBLE, 
+		    t1.getTarget()->getMember("e").GetType()->GetEnum());
+  BOOST_CHECK_EQUAL(resultNullable, 
+		    t1.getTarget()->getMember("e").GetType()->isNullable());
+  BOOST_CHECK_EQUAL(99 * 8234.24344, 
+		    t1.getTarget()->getFieldAddress("e").getDouble(outputBuf));
+  BOOST_CHECK_EQUAL(FieldType::DOUBLE, 
+		    t1.getTarget()->getMember("f").GetType()->GetEnum());
+  BOOST_CHECK_EQUAL(resultNullable, 
+		    t1.getTarget()->getMember("f").GetType()->isNullable());
+  BOOST_CHECK_EQUAL(99 / 8234.24344, 
+		    t1.getTarget()->getFieldAddress("f").getDouble(outputBuf));
+  BOOST_CHECK_EQUAL(FieldType::DOUBLE, 
+		    t1.getTarget()->getMember("g").GetType()->GetEnum());
+  BOOST_CHECK_EQUAL(resultNullable, 
+		    t1.getTarget()->getMember("g").GetType()->isNullable());
+  BOOST_CHECK_EQUAL(99 + 8234.24344, 
+		    t1.getTarget()->getFieldAddress("g").getDouble(outputBuf));
+  BOOST_CHECK_EQUAL(FieldType::DOUBLE, 
+		    t1.getTarget()->getMember("h").GetType()->GetEnum());
+  BOOST_CHECK_EQUAL(resultNullable, 
+		    t1.getTarget()->getMember("h").GetType()->isNullable());
+  BOOST_CHECK_EQUAL(8234.24344 - 99, 
+		    t1.getTarget()->getFieldAddress("h").getDouble(outputBuf));
+  BOOST_CHECK_EQUAL(FieldType::DOUBLE, 
+		    t1.getTarget()->getMember("i").GetType()->GetEnum());
+  BOOST_CHECK_EQUAL(resultNullable, 
+		    t1.getTarget()->getMember("i").GetType()->isNullable());
+  BOOST_CHECK_EQUAL(99 * 8234.24344, 
+		    t1.getTarget()->getFieldAddress("i").getDouble(outputBuf));
+  BOOST_CHECK_EQUAL(FieldType::DOUBLE, 
+		    t1.getTarget()->getMember("j").GetType()->GetEnum());
+  BOOST_CHECK_EQUAL(resultNullable, 
+		    t1.getTarget()->getMember("j").GetType()->isNullable());
+  BOOST_CHECK_EQUAL(8234.24344 / 99, 
+		    t1.getTarget()->getFieldAddress("j").getDouble(outputBuf));
+  
+  recTy.getFree().free(inputBuf);
+  t1.getTarget()->getFree().free(outputBuf);
+}
+
+BOOST_AUTO_TEST_CASE(testImplicitCastDecimalToDouble)
+{
+  ImplicitCastDecimalToDouble(false, false);
+  ImplicitCastDecimalToDouble(false, true);
+  ImplicitCastDecimalToDouble(true, false);
+  ImplicitCastDecimalToDouble(true, true);
+}
+
 // Test for our AST that will replace ANTLR3 ASTs and
 // ANTLR3 tree walking.
 BOOST_AUTO_TEST_CASE(testNativeAST)
@@ -4484,6 +4576,192 @@ void testInt64Cast(bool isNullable)
 BOOST_AUTO_TEST_CASE(testIQLInt64Cast)
 {
   testInt64Cast(false);
+}
+
+void testDoubleCast(bool isNullable)
+{
+  DynamicRecordContext ctxt;
+  InterpreterContext runtimeCtxt;
+  std::vector<RecordMember> members;
+  members.push_back(RecordMember("a", CharType::Get(ctxt, 10, isNullable)));
+  members.push_back(RecordMember("b", VarcharType::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("c", Int32Type::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("d", Int64Type::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("e", DoubleType::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("f", DecimalType::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("g", DatetimeType::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("h", DateType::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("i", DecimalType::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("j", DecimalType::Get(ctxt, isNullable)));
+  RecordType recTy(members);
+
+  RecordBuffer inputBuf = recTy.GetMalloc()->malloc();
+  recTy.setChar("a", "23444.324", inputBuf);
+  recTy.setVarchar("b", "-77142.772", inputBuf);
+  recTy.setInt32("c", 9923432, inputBuf);
+  recTy.setInt64("d", 1239923432, inputBuf);
+  recTy.setDouble("e", 8234.24344, inputBuf);
+  decimal128 dec;
+  ::decimal128FromString(&dec,
+			 "123456.8244", 
+			 runtimeCtxt.getDecimalContext());
+  recTy.getMemberOffset("f").setDecimal(dec, inputBuf);
+  boost::posix_time::ptime dt = boost::posix_time::time_from_string("2011-02-17 15:38:33");
+  recTy.setDatetime("g", dt, inputBuf);
+  boost::gregorian::date d = boost::gregorian::from_string("2011-02-22");
+  recTy.setDate("h", d, inputBuf);
+  ::decimal128FromString(&dec,
+			 "1234568901.234567898244", 
+			 runtimeCtxt.getDecimalContext());
+  recTy.getMemberOffset("i").setDecimal(dec, inputBuf);
+  ::decimal128FromString(&dec,
+			 "10530087.83435363229759969564920746", 
+			 runtimeCtxt.getDecimalContext());
+  recTy.getMemberOffset("j").setDecimal(dec, inputBuf);
+
+  {
+    RecordTypeTransfer t1(ctxt, "xfer1", &recTy, 
+			  "CAST(a AS DOUBLE PRECISION) AS a"
+			  ", CAST(b AS DOUBLE PRECISION) AS b"
+			  ", CAST(c AS DOUBLE PRECISION) AS c"
+			  ", CAST(d AS DOUBLE PRECISION) AS d"
+			  ", CAST(e AS DOUBLE PRECISION) AS e"
+			  ", CAST(f AS DOUBLE PRECISION) AS f"
+			  ", CAST(g AS DOUBLE PRECISION) AS g"
+			  ", CAST(h AS DOUBLE PRECISION) AS h"
+			  ", CAST(i AS DOUBLE PRECISION) AS i"
+			  ", CAST(j AS DOUBLE PRECISION) AS j"
+			  );
+    for(RecordType::const_member_iterator it = t1.getTarget()->begin_members();
+	it != t1.getTarget()->end_members();
+	++it) {
+      BOOST_CHECK_EQUAL(FieldType::DOUBLE, it->GetType()->GetEnum());
+      BOOST_CHECK_EQUAL(isNullable, it->GetType()->isNullable());
+    }
+    RecordBuffer outputBuf = t1.getTarget()->GetMalloc()->malloc();
+    InterpreterContext runtimeCtxt;
+    t1.execute(inputBuf, outputBuf, &runtimeCtxt, false);
+    BOOST_CHECK_EQUAL(23444.324, t1.getTarget()->getDouble("a", outputBuf));
+    BOOST_CHECK_EQUAL(-77142.772, t1.getTarget()->getDouble("b", outputBuf));
+    BOOST_CHECK_EQUAL(9923432.0, t1.getTarget()->getDouble("c", outputBuf));
+    BOOST_CHECK_EQUAL(1239923432.0, t1.getTarget()->getDouble("d", outputBuf));
+    BOOST_CHECK_EQUAL(8234.24344, t1.getTarget()->getDouble("e", outputBuf));
+    BOOST_CHECK_CLOSE(123456.8244, 
+		      t1.getTarget()->getDouble("f", outputBuf),
+		      0.00000001);
+    BOOST_CHECK_EQUAL(20110217153833.0, t1.getTarget()->getDouble("g", outputBuf));
+    BOOST_CHECK_EQUAL(20110222.0, t1.getTarget()->getDouble("h", outputBuf));
+    BOOST_CHECK_CLOSE(1234568901.2345, 
+		      t1.getTarget()->getDouble("i", outputBuf),
+		      0.0001);
+    BOOST_CHECK_CLOSE(10530087.83435363, 
+		      t1.getTarget()->getDouble("j", outputBuf),
+		      0.00000001);
+    t1.getTarget()->getFree().free(outputBuf);
+  }
+}
+
+BOOST_AUTO_TEST_CASE(testIQLDoubleCast)
+{
+  testDoubleCast(false);
+}
+
+bool decimalEquals(const char * literal,
+		   const RecordType * ty,
+		   const char * field,
+		   RecordBuffer buf)
+{
+  decContext ctxt;
+  decContextDefault(&ctxt, DEC_INIT_DECIMAL128);  
+  decNumber expected;
+  ::decNumberFromString(&expected, literal, &ctxt);
+  decNumber actual;
+  ::decimal128ToNumber(ty->getMemberOffset(field).getDecimalPtr(buf), &actual);
+  decNumber result;
+  ::decNumberCompare(&result, &expected, &actual, &ctxt);
+  return result.lsu[0] == 0;
+}
+
+void testDecimalCast(bool isNullable)
+{
+  DynamicRecordContext ctxt;
+  InterpreterContext runtimeCtxt;
+  std::vector<RecordMember> members;
+  members.push_back(RecordMember("a", CharType::Get(ctxt, 10, isNullable)));
+  members.push_back(RecordMember("b", VarcharType::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("c", Int32Type::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("d", Int64Type::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("e", DoubleType::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("f", DecimalType::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("g", DatetimeType::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("h", DateType::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("i", DecimalType::Get(ctxt, isNullable)));
+  members.push_back(RecordMember("j", DecimalType::Get(ctxt, isNullable)));
+  RecordType recTy(members);
+
+  RecordBuffer inputBuf = recTy.GetMalloc()->malloc();
+  recTy.setChar("a", "23444.324", inputBuf);
+  recTy.setVarchar("b", "-77142.772", inputBuf);
+  recTy.setInt32("c", 9923432, inputBuf);
+  recTy.setInt64("d", 1239923432, inputBuf);
+  recTy.setDouble("e", 8234.24344, inputBuf);
+  decimal128 dec;
+  ::decimal128FromString(&dec,
+			 "123456.8244", 
+			 runtimeCtxt.getDecimalContext());
+  recTy.getMemberOffset("f").setDecimal(dec, inputBuf);
+  boost::posix_time::ptime dt = boost::posix_time::time_from_string("2011-02-17 15:38:33");
+  recTy.setDatetime("g", dt, inputBuf);
+  boost::gregorian::date d = boost::gregorian::from_string("2011-02-22");
+  recTy.setDate("h", d, inputBuf);
+  ::decimal128FromString(&dec,
+			 "1234568901.234567898244", 
+			 runtimeCtxt.getDecimalContext());
+  recTy.getMemberOffset("i").setDecimal(dec, inputBuf);
+  ::decimal128FromString(&dec,
+			 "10530087.83435363229759969564920746", 
+			 runtimeCtxt.getDecimalContext());
+  recTy.getMemberOffset("j").setDecimal(dec, inputBuf);
+
+  {
+    RecordTypeTransfer t1(ctxt, "xfer1", &recTy, 
+			  "CAST(a AS DECIMAL) AS a"
+			  ", CAST(b AS DECIMAL) AS b"
+			  ", CAST(c AS DECIMAL) AS c"
+			  ", CAST(d AS DECIMAL) AS d"
+			  ", CAST(e AS DECIMAL) AS e"
+			  ", CAST(f AS DECIMAL) AS f"
+			  ", CAST(g AS DECIMAL) AS g"
+			  ", CAST(h AS DECIMAL) AS h"
+			  ", CAST(i AS DECIMAL) AS i"
+			  ", CAST(j AS DECIMAL) AS j"
+			  );
+    for(RecordType::const_member_iterator it = t1.getTarget()->begin_members();
+	it != t1.getTarget()->end_members();
+	++it) {
+      BOOST_CHECK_EQUAL(FieldType::BIGDECIMAL, it->GetType()->GetEnum());
+      BOOST_CHECK_EQUAL(isNullable, it->GetType()->isNullable());
+    }
+    RecordBuffer outputBuf = t1.getTarget()->GetMalloc()->malloc();
+    InterpreterContext runtimeCtxt;
+    t1.execute(inputBuf, outputBuf, &runtimeCtxt, false);
+    BOOST_CHECK(decimalEquals("23444.324", t1.getTarget(), "a", outputBuf));
+    BOOST_CHECK(decimalEquals("-77142.772", t1.getTarget(), "b", outputBuf));
+    BOOST_CHECK(decimalEquals("9923432.0", t1.getTarget(), "c", outputBuf));
+    BOOST_CHECK(decimalEquals("1239923432.0", t1.getTarget(), "d", outputBuf));
+    BOOST_CHECK(decimalEquals("8234.24344", t1.getTarget(), "e", outputBuf));
+    BOOST_CHECK(decimalEquals("123456.8244", t1.getTarget(), "f", outputBuf));
+    BOOST_CHECK(decimalEquals("20110217153833.0", t1.getTarget(), "g", outputBuf));
+    BOOST_CHECK(decimalEquals("20110222.0", t1.getTarget(), "h", outputBuf));
+    BOOST_CHECK(decimalEquals("1234568901.234567898244", t1.getTarget(), "i", outputBuf));
+    BOOST_CHECK(decimalEquals("10530087.83435363229759969564920746", t1.getTarget(), "j", outputBuf));
+    t1.getTarget()->getFree().free(outputBuf);
+  }
+}
+
+BOOST_AUTO_TEST_CASE(testIQLDecimalCast)
+{
+  testDecimalCast(false);
 }
 
 void testVarcharCast(bool isNullable)

@@ -482,6 +482,22 @@ public:
 					   const FieldType * retAttrs);
 
   /**
+   * Cast non null value to DOUBLE.  Put return value in ret.
+   */
+  IQLToLLVMValue::ValueType buildCastDouble(const IQLToLLVMValue * e, 
+					    const FieldType * argAttrs, 
+					    llvm::Value * ret, 
+					    const FieldType * retAttrs);
+
+  /**
+   * Cast non null value to DECIMAL.  Put return value in ret.
+   */
+  IQLToLLVMValue::ValueType buildCastDecimal(const IQLToLLVMValue * e, 
+					     const FieldType * argAttrs, 
+					     llvm::Value * ret, 
+					     const FieldType * retAttrs);
+
+  /**
    * Subtract rhs from lhs.  Put return value in ret.
    */
   IQLToLLVMValue::ValueType buildSub(const IQLToLLVMValue * lhs, 
@@ -549,6 +565,8 @@ private:
   static IQLToLLVMValueRef convertIntToDec(CodeGenerationContext * ctxt,
 					   LLVMValueRef llvmVal,
 					   bool isInt64);
+  static IQLToLLVMValueRef convertDecToDouble(CodeGenerationContext * ctxt,
+					      LLVMValueRef llvmVal);
 
 public:
   /**

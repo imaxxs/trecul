@@ -394,6 +394,13 @@ const FieldType * TypeCheckContext::castTo(const FieldType * lhs,
       return rhs;
     else 
       return NULL;
+  } else if (e1->GetEnum() == FieldType::BIGDECIMAL) {
+    if (e2->GetEnum() == FieldType::BIGDECIMAL)
+      return rhs;
+    else if (e2->GetEnum() == FieldType::DOUBLE)
+      return rhs;
+    else 
+      return NULL;
   } else if (e1->GetEnum() == FieldType::CHAR) {
     // TODO: What about sizes of these types?
     if (e2->GetEnum() == FieldType::VARCHAR)
