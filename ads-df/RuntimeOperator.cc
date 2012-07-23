@@ -1596,6 +1596,15 @@ void RuntimeSortRunningTotalOperator::onEvent(RuntimePort * port)
   case START:
     // TODO: If this is GROUP ALL then initialize aggregate record here (to
     // make sure we have an output even without inputs).
+    if (NULL == getSortRunningTotalType().mEqFun) {
+      // No group keys specified.  Create an aggregate state record
+      mCurrentAggregate = RecordBuffer::create();
+      // No need for an input record because no keys
+      RecordBuffer tmp;
+      getSortRunningTotalType().mAggregate->executeInit(tmp, 
+							mCurrentAggregate, 
+							mRuntimeContext);
+    }
     while(true) {
       // Read all inputs
       requestRead(0);
@@ -1609,7 +1618,8 @@ void RuntimeSortRunningTotalOperator::onEvent(RuntimePort * port)
 	// input stream.
 	if (RecordBuffer::isEOS(mInput) || 
 	    mCurrentAggregate == RecordBuffer() ||
-	    !getSortRunningTotalType().mEqFun->execute(mCurrentAggregate, mInput, mRuntimeContext)) {
+	    (getSortRunningTotalType().mEqFun != NULL &&
+	     !getSortRunningTotalType().mEqFun->execute(mCurrentAggregate, mInput, mRuntimeContext))) {
 	  // If table is not empty, then we output the accumulated record
 	  if (mCurrentAggregate != RecordBuffer()) {
 	      getSortRunningTotalType().mAggregateFree.free(mCurrentAggregate);
