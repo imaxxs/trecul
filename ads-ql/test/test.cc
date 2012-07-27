@@ -3713,6 +3713,10 @@ BOOST_AUTO_TEST_CASE(testIQLIntervalTypes)
 		    t1.getTarget()->getMember("q").GetType()->GetEnum());
   BOOST_CHECK_EQUAL(false,
 		    t1.getTarget()->getMember("q").GetType()->isNullable());
+  BOOST_CHECK_EQUAL(FieldType::DATETIME,
+		    t1.getTarget()->getMember("r").GetType()->GetEnum());
+  BOOST_CHECK_EQUAL(true,
+		    t1.getTarget()->getMember("r").GetType()->isNullable());
   
   // Actually execute this thing.  
   RecordBuffer inputBuf = recordType->GetMalloc()->malloc();
