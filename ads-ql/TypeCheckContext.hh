@@ -133,6 +133,18 @@ private:
   // can be calculated.
   const RecordType * mAggregateRecord;
 
+  /**
+   * Type check and create an INTERVAL type constructor.
+   * N.B.  Note use of int32_t for the unit argument. 
+   * This is actually an IntervalType::IntervalUnit but I don't
+   * want to include the header.
+   * Someday we'll be able to forward declare the enum but right now
+   * that functionality is bleeding edge  standard C++0x but not 
+   * implemented in most compilers.
+   */
+  const FieldType * internalBuildInterval(const FieldType * ty, 
+					  int32_t unit);
+
   bool isBuiltinFunction(const char * name);
 
   void init(const std::vector<AliasedRecordType>& sources,

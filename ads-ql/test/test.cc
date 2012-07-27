@@ -3683,6 +3683,8 @@ BOOST_AUTO_TEST_CASE(testIQLIntervalTypes)
   DynamicRecordContext ctxt;
   std::vector<RecordMember> members;
   members.push_back(RecordMember("a", DatetimeType::Get(ctxt)));
+  members.push_back(RecordMember("a1", Int32Type::Get(ctxt)));
+  members.push_back(RecordMember("a2", Int32Type::Get(ctxt, true)));
   boost::shared_ptr<RecordType> recordType(new RecordType(members));
   
   // Simple Transfer of everything
@@ -3703,12 +3705,21 @@ BOOST_AUTO_TEST_CASE(testIQLIntervalTypes)
 			", a + interval 86402 seCOND AS n"
 			", INTERVAL -5 YEAR + a AS o"
 			", a - INTERVAL 5 YEAR AS p"
+			", a + INTERVAL a1 DAY AS q"
+			", a + INTERVAL a2 DAY AS r"
 			);
+
+  BOOST_CHECK_EQUAL(FieldType::DATETIME,
+		    t1.getTarget()->getMember("q").GetType()->GetEnum());
+  BOOST_CHECK_EQUAL(false,
+		    t1.getTarget()->getMember("q").GetType()->isNullable());
   
   // Actually execute this thing.  
   RecordBuffer inputBuf = recordType->GetMalloc()->malloc();
   boost::posix_time::ptime dt = boost::posix_time::time_from_string("2011-02-17 15:38:33");
   recordType->setDatetime("a", dt, inputBuf);
+  recordType->setInt32("a1", 5, inputBuf);
+  recordType->setInt32("a2", 5, inputBuf);
   RecordBuffer outputBuf = t1.getTarget()->GetMalloc()->malloc();
   InterpreterContext runtimeCtxt;
   t1.execute(inputBuf, outputBuf, &runtimeCtxt, false);
@@ -3740,6 +3751,10 @@ BOOST_AUTO_TEST_CASE(testIQLIntervalTypes)
 		    t1.getTarget()->getFieldAddress("o").getDatetime(outputBuf));
   BOOST_CHECK_EQUAL(boost::posix_time::time_from_string("2006-02-17 15:38:33"),
 		    t1.getTarget()->getFieldAddress("p").getDatetime(outputBuf));
+  BOOST_CHECK_EQUAL(boost::posix_time::time_from_string("2011-02-22 15:38:33"),
+		    t1.getTarget()->getFieldAddress("q").getDatetime(outputBuf));
+  BOOST_CHECK_EQUAL(boost::posix_time::time_from_string("2011-02-22 15:38:33"),
+		    t1.getTarget()->getFieldAddress("r").getDatetime(outputBuf));
 }
 
 BOOST_AUTO_TEST_CASE(testIQLIntervalTypesNegative)

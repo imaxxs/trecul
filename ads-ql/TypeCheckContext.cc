@@ -768,52 +768,42 @@ const FieldType * TypeCheckContext::buildType(const char * typeName, bool nullab
   }
 }
 
-const FieldType * TypeCheckContext::buildIntervalDay(const FieldType * ty)
+const FieldType * TypeCheckContext::internalBuildInterval(const FieldType * ty, int32_t u)
 {
   // TODO: Support string and integer as per mySQL behavior
-  if (ty != Int32Type::Get(mContext))
-    throw std::runtime_error("Expected integer expression");
-  return IntervalType::Get(mContext, IntervalType::DAY);
+  if (ty->GetEnum() != FieldType::INT32)
+    throw std::runtime_error("Expected integer expression in INTERVAL expression");
+  return IntervalType::Get(mContext, (IntervalType::IntervalUnit) u, ty->isNullable());
+}
+
+const FieldType * TypeCheckContext::buildIntervalDay(const FieldType * ty)
+{
+  return internalBuildInterval(ty, IntervalType::DAY);
 }
 
 const FieldType * TypeCheckContext::buildIntervalHour(const FieldType * ty)
 {
-  // TODO: Support string and integer as per mySQL behavior
-  if (ty != Int32Type::Get(mContext))
-    throw std::runtime_error("Expected integer expression");
-  return IntervalType::Get(mContext, IntervalType::HOUR);
+  return internalBuildInterval(ty, IntervalType::HOUR);
 }
 
 const FieldType * TypeCheckContext::buildIntervalMinute(const FieldType * ty)
 {
-  // TODO: Support string and integer as per mySQL behavior
-  if (ty != Int32Type::Get(mContext))
-    throw std::runtime_error("Expected integer expression");
-  return IntervalType::Get(mContext, IntervalType::MINUTE);
+  return internalBuildInterval(ty, IntervalType::MINUTE);
 }
 
 const FieldType * TypeCheckContext::buildIntervalMonth(const FieldType * ty)
 {
-  // TODO: Support string and integer as per mySQL behavior
-  if (ty != Int32Type::Get(mContext))
-    throw std::runtime_error("Expected integer expression");
-  return IntervalType::Get(mContext, IntervalType::MONTH);
+  return internalBuildInterval(ty, IntervalType::MONTH);
 }
 
 const FieldType * TypeCheckContext::buildIntervalSecond(const FieldType * ty)
 {
-  // TODO: Support string and integer as per mySQL behavior
-  if (ty != Int32Type::Get(mContext))
-    throw std::runtime_error("Expected integer expression");
-  return IntervalType::Get(mContext, IntervalType::SECOND);
+  return internalBuildInterval(ty, IntervalType::SECOND);
 }
 
 const FieldType * TypeCheckContext::buildIntervalYear(const FieldType * ty)
 {
-  // TODO: Support string and integer as per mySQL behavior
-  if (ty != Int32Type::Get(mContext))
-    throw std::runtime_error("Expected integer expression");
-  return IntervalType::Get(mContext, IntervalType::YEAR);
+  return internalBuildInterval(ty, IntervalType::YEAR);
 }
 
 void TypeCheckContext::beginCase()
