@@ -485,6 +485,7 @@ void CodeGenerationContext::restoreAggregateContext(CodeGenerationFunctionContex
   this->LLVMFunction = fCtxt->Function;
   this->IQLRecordArguments = fCtxt->RecordArguments;
   this->IQLOutputRecord = fCtxt->OutputRecord;
+  this->AllocaCache = (local_cache *) fCtxt->AllocaCache;
 }
 
 void CodeGenerationContext::saveAggregateContext(CodeGenerationFunctionContext * fCtxt)

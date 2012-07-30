@@ -1,0 +1,10 @@
+g = generate[output="RECORDCOUNT % 4 AS a, CASE WHEN RECORDCOUNT % 3 = 1 THEN NULL ELSE RECORDCOUNT % 3 END AS b, RECORDCOUNT AS c", numRecords = 20];
+
+h = group_by[hashKey="a", hashKey="b", output="a, ISNULL(b, 1) AS b, SUM(CASE WHEN c % 2 = 1 THEN c ELSE 0 END) AS c"];
+g -> h; 
+
+s = sort[key="a", key="b"];
+h -> s;
+
+w = write[file="output.txt", mode="text"];
+s -> w;
