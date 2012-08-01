@@ -3500,6 +3500,7 @@ static void LLVMSetFieldsRegex(CodeGenerationContext * ctxt,
 			       const RecordType * sourceType,
 			       const std::string& expr,
 			       const std::string& rename,
+			       const std::string& recordName,
 			       int * pos)
 {
   LLVMValueRef sourcePtr = LLVMBuildLoad(ctxt->LLVMBuilder,
@@ -3546,7 +3547,9 @@ static void LLVMSetFieldsRegex(CodeGenerationContext * ctxt,
     int tmp=fit->second;
     LLVMSetField(wrap(ctxt),
 		 &tmp, 
-		 IQLToLLVMBuildVariableRef(wrap(ctxt), fit->first.c_str(), NULL));
+		 IQLToLLVMBuildVariableRef(wrap(ctxt), 
+					   recordName.size() ? recordName.c_str() : fit->first.c_str(), 
+					   recordName.size() ? fit->first.c_str() : NULL));
   }
 }
 
@@ -3623,7 +3626,7 @@ void LLVMSetFields(IQLCodeGenerationContextRef ctxtRef,
     }
   } else {    
     LLVMSetFieldsRegex(ctxt, it->second.first,
-		       it->second.second, ".*", "", pos);
+		       it->second.second, ".*", "", recordName, pos);
   }
 }
 
@@ -3642,7 +3645,7 @@ void LLVMBuildQuotedId(IQLCodeGenerationContextRef ctxtRef,
       it != recordTypes.end();
       ++it) {
     LLVMSetFieldsRegex(ctxt, it->second.first,
-		       it->second.second, strExpr, renameExpr, pos);
+		       it->second.second, strExpr, renameExpr, "", pos);
   }
 }
 

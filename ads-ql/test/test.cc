@@ -4000,6 +4000,138 @@ BOOST_AUTO_TEST_CASE(testIQLRecordTransfer2IntegersWithCompoundName)
     recordType2->getFree().free(inputBuf2);
     t1.getTarget()->getFree().free(outputBuf);
   }
+  {
+    // glob transfer of table 
+    RecordTypeTransfer2 t1(ctxt, "xfer1", types,
+			   "table.*, probe.a AS f");
+    RecordBuffer inputBuf = recordType->GetMalloc()->malloc();
+    recordType->setInt32("a", 23, inputBuf);
+    recordType->setInt32("b", 230, inputBuf);
+    recordType->setInt32("c", 2300, inputBuf);
+    RecordBuffer inputBuf2 = recordType2->GetMalloc()->malloc();
+    recordType2->setInt32("d", 52, inputBuf2);
+    recordType2->setInt32("e", 520, inputBuf2);
+    recordType2->setInt32("a", 5200, inputBuf2);
+    RecordBuffer outputBuf = t1.getTarget()->GetMalloc()->malloc();
+    InterpreterContext runtimeCtxt;
+    t1.execute(inputBuf, inputBuf2, outputBuf, &runtimeCtxt, false, false);
+    BOOST_CHECK_EQUAL(23, t1.getTarget()->getInt32("a", outputBuf));
+    BOOST_CHECK_EQUAL(230, t1.getTarget()->getInt32("b", outputBuf));
+    BOOST_CHECK_EQUAL(2300, t1.getTarget()->getInt32("c", outputBuf));
+    BOOST_CHECK_EQUAL(5200, t1.getTarget()->getInt32("f", outputBuf));
+    recordType->getFree().free(inputBuf);
+    recordType2->getFree().free(inputBuf2);
+    t1.getTarget()->getFree().free(outputBuf);
+  }
+}
+
+BOOST_AUTO_TEST_CASE(testIQLRecordTransfer2IntegersWithCompoundNameVarchar)
+{
+  DynamicRecordContext ctxt;
+  std::vector<RecordMember> members;
+  members.push_back(RecordMember("a", VarcharType::Get(ctxt)));
+  members.push_back(RecordMember("b", VarcharType::Get(ctxt)));
+  members.push_back(RecordMember("c", VarcharType::Get(ctxt)));
+  boost::shared_ptr<RecordType> recordType(new RecordType(members));
+  members.clear();
+  members.push_back(RecordMember("d", VarcharType::Get(ctxt)));
+  members.push_back(RecordMember("e", VarcharType::Get(ctxt)));
+  members.push_back(RecordMember("a", VarcharType::Get(ctxt)));
+  boost::shared_ptr<RecordType> recordType2(new RecordType(members));
+  
+  std::vector<AliasedRecordType> types;
+  types.push_back(AliasedRecordType("table", recordType.get()));
+  types.push_back(AliasedRecordType("probe", recordType2.get()));
+
+  // Simple transfer of everything should throw because of 
+  // duplicate name in output.
+  try {
+    RecordTypeTransfer2 t(ctxt, "xfer1", types, "table.*, probe.*");
+    BOOST_CHECK(false);
+  } catch (std::runtime_error& ex) {
+    std::cout << "Received expected exception: " << ex.what() << std::endl;
+  }
+
+  // Local variable reference is ambiguous
+  try {
+    RecordTypeTransfer2 t(ctxt, "xfer1", types, "DECLARE b = table.a, b");
+    BOOST_CHECK(false);
+  } catch (std::runtime_error& ex) {
+    std::cout << "Received expected exception: " << ex.what() << std::endl;
+  }
+
+  // Selective transfer should still throw because of 
+  // duplicate name in output.
+  try {
+    RecordTypeTransfer2 t(ctxt, "xfer1", types, 
+			  "table.a, b, c, d, e, probe.a");
+    BOOST_CHECK(false);
+  } catch (std::runtime_error& ex) {
+    std::cout << "Received expected exception: " << ex.what() << std::endl;
+  }
+
+  {
+    // selective transfer with compound names
+    RecordTypeTransfer2 t1(ctxt, "xfer1", types,
+			   "table.a, b, c, d, e, probe.a AS f");
+
+    // Actually execute this thing.
+    RecordBuffer inputBuf = recordType->GetMalloc()->malloc();
+    recordType->setVarchar("a", "23", inputBuf);
+    recordType->setVarchar("b", "230", inputBuf);
+    recordType->setVarchar("c", "2300", inputBuf);
+    RecordBuffer inputBuf2 = recordType2->GetMalloc()->malloc();
+    recordType2->setVarchar("d", "52", inputBuf2);
+    recordType2->setVarchar("e", "520", inputBuf2);
+    recordType2->setVarchar("a", "5200", inputBuf2);
+    RecordBuffer outputBuf = t1.getTarget()->GetMalloc()->malloc();
+    InterpreterContext runtimeCtxt;
+    t1.execute(inputBuf, inputBuf2, outputBuf, &runtimeCtxt, false, false);
+    BOOST_CHECK(boost::algorithm::equals("23", 
+					 t1.getTarget()->getVarcharPtr("a", outputBuf)->Ptr));
+    BOOST_CHECK(boost::algorithm::equals("230", 
+					 t1.getTarget()->getVarcharPtr("b", outputBuf)->Ptr));
+    BOOST_CHECK(boost::algorithm::equals("2300", 
+					 t1.getTarget()->getVarcharPtr("c", outputBuf)->Ptr));
+    BOOST_CHECK(boost::algorithm::equals("52", 
+					 t1.getTarget()->getVarcharPtr("d", outputBuf)->Ptr));
+    BOOST_CHECK(boost::algorithm::equals("520", 
+					 t1.getTarget()->getVarcharPtr("e", outputBuf)->Ptr));
+    BOOST_CHECK(boost::algorithm::equals("5200", 
+					 t1.getTarget()->getVarcharPtr("f", outputBuf)->Ptr));
+    recordType->getFree().free(inputBuf);
+    recordType2->getFree().free(inputBuf2);
+    t1.getTarget()->getFree().free(outputBuf);
+  }
+  {
+    // glob transfer of table
+    RecordTypeTransfer2 t1(ctxt, "xfer1", types,
+			   "table.*, probe.a AS f");
+
+    // Actually execute this thing.
+    RecordBuffer inputBuf = recordType->GetMalloc()->malloc();
+    recordType->setVarchar("a", "23", inputBuf);
+    recordType->setVarchar("b", "230", inputBuf);
+    recordType->setVarchar("c", "2300", inputBuf);
+    RecordBuffer inputBuf2 = recordType2->GetMalloc()->malloc();
+    recordType2->setVarchar("d", "52", inputBuf2);
+    recordType2->setVarchar("e", "520", inputBuf2);
+    recordType2->setVarchar("a", "5200", inputBuf2);
+    RecordBuffer outputBuf = t1.getTarget()->GetMalloc()->malloc();
+    InterpreterContext runtimeCtxt;
+    t1.execute(inputBuf, inputBuf2, outputBuf, &runtimeCtxt, false, false);
+    BOOST_CHECK(boost::algorithm::equals("23", 
+					 t1.getTarget()->getVarcharPtr("a", outputBuf)->Ptr));
+    BOOST_CHECK(boost::algorithm::equals("230", 
+					 t1.getTarget()->getVarcharPtr("b", outputBuf)->Ptr));
+    BOOST_CHECK(boost::algorithm::equals("2300", 
+					 t1.getTarget()->getVarcharPtr("c", outputBuf)->Ptr));
+    BOOST_CHECK(boost::algorithm::equals("5200", 
+					 t1.getTarget()->getVarcharPtr("f", outputBuf)->Ptr));
+    recordType->getFree().free(inputBuf);
+    recordType2->getFree().free(inputBuf2);
+    t1.getTarget()->getFree().free(outputBuf);
+  }
 }
 
 BOOST_AUTO_TEST_CASE(testIQLRecordTransferRegex)
