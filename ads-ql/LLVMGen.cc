@@ -3907,8 +3907,11 @@ IQLFieldTypeRef IQLTypeCheckEquals(IQLTypeCheckContextRef ctxtRef, IQLFieldTypeR
 {
   TypeCheckContext * ctxt = unwrap(ctxtRef);
   IQLFieldTypeRef ty = IQLTypeCheckBinaryConversion::leastCommonTypeNullable(ctxt, lhs, rhs);
-  if (ty == NULL)
-    throw std::runtime_error("Type check error");
+  if (ty == NULL) 
+    throw std::runtime_error((boost::format("Type check error: cannot compare "
+					    "expressions of type %1% and %2%")
+			      % unwrap(lhs)->toString() 
+			      % unwrap(rhs)->toString()).str());
   // TODO: Currently returning int32_t for boolean (be smarter here).
   return wrap(ctxt->buildBooleanType(unwrap(ty)->isNullable()));
 }
