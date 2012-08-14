@@ -43,6 +43,93 @@
 #include "RecordParser.hh"
 #include "RuntimeProcess.hh"
 
+struct SortNodeLess : std::binary_function<SortNode, SortNode, bool>
+{
+  RecordTypeEquals IQLCompare;
+  bool operator() (const SortNode & lhs, const SortNode & rhs) const
+  {
+    return lhs.KeyPrefix < rhs.KeyPrefix ||
+      (lhs.KeyPrefix == rhs.KeyPrefix && IQLCompare(lhs.Value, rhs.Value));
+  }    
+  SortNodeLess(const class IQLFunctionModule * f = NULL,
+	       class InterpreterContext * ctxt = NULL)
+    :
+    IQLCompare(f,ctxt)
+  {
+  }
+};
+
+SortRun::SortRun(std::size_t memoryAllowed)
+  :
+  mBegin(NULL),
+  mFilled(NULL),
+  mEnd(NULL),
+  mSortSz(0),
+  mMemoryAllowed(memoryAllowed),
+  mReallocThreshold(1.1)
+{
+}
+
+SortRun::~SortRun()
+{
+  delete [] mBegin;
+}
+
+void SortRun::capacity(std::size_t numRecords)
+{
+  std::ptrdiff_t oldRecords = (mFilled - mBegin);
+  SortNode * newBegin = new SortNode [numRecords];
+  memcpy(newBegin, mBegin, sizeof(SortNode)*(mFilled - mBegin));
+  mFilled = newBegin + (mFilled - mBegin);
+  mEnd = newBegin + numRecords;
+  std::swap(mBegin, newBegin);
+  delete [] newBegin;
+  mSortSz += (numRecords - oldRecords)*sizeof(SortNode);
+}
+
+bool SortRun::push_back_with_realloc(const SortNode& n, std::size_t dataLen)
+{
+  // Can we grow to accept the node?  This means allocating
+  // space for both the node and the data pointed to by the 
+  // node.  We have to balance efficiency in the reallocation
+  // (not doing it too frequently) vs. fragmentation (allocating
+  // too much for sort notes and not leaving enough for data).
+  // We handle this by having two modes.  In mode 1 there is a large
+  // amount of memory left and we can get away with a standard
+  // "overallocate" by constant factor approach.  In mode 2
+  // we use an estimate the average record size to figure out 
+  // how many records to accept.
+  std::size_t newSz = mSortSz + dataLen;
+  std::ptrdiff_t numRecords = (mEnd - mBegin);
+  // Why am I using newSz and not mSortSz?  Not really sure...
+  if (numRecords==0 || newSz < mMemoryAllowed/2) {
+    // We can only play the double buffer card when we know we
+    // won't exceed our limit.
+    std::size_t numNodes = mMemoryAllowed/(2*sizeof(SortNode));
+    numNodes = (std::min)((std::max)(std::size_t(1),numNodes), std::size_t(8));
+    capacity(numRecords ? (size_t) (numRecords*1.25) : numNodes);	  
+  } else {
+    // Assume we've got enough records around to take a stab
+    // at the correct number of records.
+    std::ptrdiff_t avgRecSz = mSortSz/numRecords;
+    std::size_t targetNumberRecords = mMemoryAllowed/avgRecSz;
+    // How much memory to play double buffer?
+    std::size_t doubleBufferSpace = (mMemoryAllowed-mSortSz)/sizeof(SortNode);
+    targetNumberRecords = (std::min)(doubleBufferSpace, targetNumberRecords);
+    if (targetNumberRecords <= mReallocThreshold*numRecords) {
+      return false;
+    }
+    capacity(targetNumberRecords);
+  }
+  // Recurse; we'll hit the simple case.
+  return push_back(n, dataLen);
+}
+
+void SortRun::clear()
+{
+  mFilled = mBegin;
+  mSortSz = sizeof(SortNode)*capacity();
+}
 
 class SortWriterContext
 {
@@ -880,48 +967,10 @@ private:
    * processor might look pretty good from an L2 point of view.
    * TODO: Prototype a replacement selection method using LoserTree.
    */
-  class SortNode
-  {
-  public:
-    // Should we make the prefix bigger since
-    // the padding is there or should be look
-    // at storing an index instead of a pointer?
-    // Probably the former unless we copied the
-    // records into a contiguous buffer so
-    // that we could arrange a 32-bit address
-    // relative to a known base (that could be squirreled
-    // away in compare function's state).
-    uint32_t KeyPrefix;
-    RecordBuffer Value;
-    SortNode(uint32_t keyPrefix, RecordBuffer val)
-      :
-      KeyPrefix(keyPrefix),
-      Value(val)
-    {
-    }
-  };
-  struct SortNodeLess : std::binary_function<SortNode, SortNode, bool>
-  {
-    RecordTypeEquals IQLCompare;
-    bool operator() (const SortNode & lhs, const SortNode & rhs) const
-    {
-      return lhs.KeyPrefix < rhs.KeyPrefix ||
-	(lhs.KeyPrefix == rhs.KeyPrefix && IQLCompare(lhs.Value, rhs.Value));
-    }    
-    SortNodeLess(const class IQLFunctionModule * f = NULL,
-		 class InterpreterContext * ctxt = NULL)
-      :
-      IQLCompare(f,ctxt)
-    {
-    }
-  };
   SortNodeLess mLessFunction;
-  std::vector<SortNode> mSortRuns;
-  std::vector<SortNode>::iterator mSortRunIt;
+  SortRun mSortRuns;
+  SortRun::iterator mSortRunIt;
   uint64_t mSortTicks;
-  // Amount of memory consumed by the current sort run.
-  // This includes the memory used by the SortNode.
-  uint64_t mSortSz;
   /**
    * Current input record.
    */
@@ -942,7 +991,11 @@ private:
   /**
    * Sort in memory buffers and write to disk.
    */
-  void writeSortRun();
+  void writeSortRun(SortRun & sortRun);
+  void writeSortRun()
+  {
+    writeSortRun(mSortRuns);
+  }
 
   /**
    * For merging we are dynamically generating a
@@ -1052,7 +1105,7 @@ RuntimeSortOperator::RuntimeSortOperator(RuntimeOperator::Services& services,
   mState(START),
   mLessFunction(opType.mLessThanFun, new InterpreterContext()),
   mSortTicks(0),
-  mSortSz(0),
+  mSortRuns(opType.mMemoryAllowed),
   mInputDone(false),
   mWriterType(NULL),
   mWriter(NULL)
@@ -1081,29 +1134,37 @@ return (uint64_t)hi << 32 | lo;
 
 void RuntimeSortOperator::addSortRun()
 {
-  // See if we are forced to spill
   std::size_t sz = getMyOperatorType().mSerialize.getRecordLength(mInput);
-  sz += sizeof(SortNode);
-  if (mSortSz != 0 &&
-      mSortSz+sz >= getMyOperatorType().mMemoryAllowed) {
-    writeSortRun();
-  }
-  // TODO: Handle the case in which a single record is bigger than
-  // allocated memory; we should head straight to disk.
   uint32_t keyPrefix = 
     getMyOperatorType().mKeyPrefix->execute(mInput, 
 					    NULL, 
 					    mLessFunction.IQLCompare.Context);
-  mSortRuns.push_back(SortNode(keyPrefix, mInput));
-  mSortSz += sz;
+  SortNode n(keyPrefix, mInput);
+  // See if we are forced to spill
+  if(!mSortRuns.push_back(n, sz)) {
+    writeSortRun();
+    // Empty sort run; try again.
+    if (!mSortRuns.push_back(n, sz)) {
+      // To handle the case in which a single record is bigger than
+      // allocated memory, we head straight to disk.  We do that by
+      // creating a temporary SortRun object with no memory limit and 
+      // writing through it.
+      SortRun tmp(std::numeric_limits<std::size_t>::max());
+      if (!tmp.push_back(n, sz)) {
+	throw std::runtime_error("INTERNAL ERROR : "
+				 "Insufficient memory to sort");
+      }
+      writeSortRun(tmp);
+    }
+  }
   mInput = RecordBuffer();
 }
 
-void RuntimeSortOperator::writeSortRun()
+void RuntimeSortOperator::writeSortRun(SortRun & sortRuns)
 {
   // Sort in memory data.
   uint64_t tick = rdtsc();
-  std::sort(mSortRuns.begin(), mSortRuns.end(), mLessFunction);
+  std::sort(sortRuns.begin(), sortRuns.end(), mLessFunction);
   mSortTicks += (rdtsc()-tick);
 
   if (mWriterType == NULL) {
@@ -1138,14 +1199,13 @@ void RuntimeSortOperator::writeSortRun()
   mSortFiles.push_back(mWriterType->mFile);
   mWriter->start();
   // Write out sort run
-  for(mSortRunIt = mSortRuns.begin(); 
-      mSortRunIt != mSortRuns.end();
+  for(mSortRunIt = sortRuns.begin(); 
+      mSortRunIt != sortRuns.end();
       ++mSortRunIt) {
     mWriter->onEvent(mSortRunIt->Value);
   }
   mWriter->onEvent(RecordBuffer());
-  mSortRuns.clear();
-  mSortSz = 0;
+  sortRuns.clear();
 }
 
 void RuntimeSortOperator::buildMergeGraph()
@@ -1321,7 +1381,6 @@ void RuntimeSortOperator::onEvent(RuntimePort * port)
       }
       // Clear all of the state with sort runs
       mSortRuns.clear();
-      mSortSz = 0;
       if (!mInputDone) 
 	addSortRun();
     }

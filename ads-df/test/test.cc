@@ -1876,6 +1876,143 @@ BOOST_AUTO_TEST_CASE(testDynamicBitsetSerialization)
   BOOST_CHECK_EQUAL(b.count(), b.size());
 }
 
+BOOST_AUTO_TEST_CASE(testSortRun)
+{
+  {
+    SortRun sr(1024);
+    for(int i = 0; i<7; i++) {
+      // This uses 16*8 + 128*7 bytes = 1024
+      // NOTE: 8 is the minimum number of sort nodes alloced.
+      BOOST_CHECK(sr.push_back(SortNode(), 128));
+    }
+    BOOST_CHECK(!sr.push_back(SortNode(), 128));
+    BOOST_CHECK_EQUAL(8, sr.capacity());
+  }
+  {
+    SortRun sr(1024);
+    for(int i = 0; i<8; i++) {
+      // This uses 8*80 = 640 bytes
+      BOOST_CHECK(sr.push_back(SortNode(), 64));
+      BOOST_CHECK_EQUAL(8, sr.capacity());
+    }
+    // Need extra room to fill up for estimate of 
+    // 12 records.  For double buffer only need
+    // 12*16 = 192 so this fits
+    BOOST_CHECK(sr.push_back(SortNode(), 64));
+    BOOST_CHECK_EQUAL(12, sr.capacity());
+    for(int i = 9; i<12; i++) {
+      BOOST_CHECK(sr.push_back(SortNode(), 64));
+      BOOST_CHECK_EQUAL(12, sr.capacity());
+      BOOST_CHECK_EQUAL(i+1, sr.size());
+    }    
+    BOOST_CHECK(!sr.push_back(SortNode(), 64));
+  }
+  {
+    SortRun sr(808);
+    for(int i = 0; i<8; i++) {
+      // This uses 8*80 = 640 bytes
+      BOOST_CHECK(sr.push_back(SortNode(), 64));
+      BOOST_CHECK_EQUAL(8, sr.capacity());
+      BOOST_CHECK_EQUAL(i+1, sr.size());
+    }
+    // Need extra room to fill up for estimate of 
+    // 12 records.  For double buffer we need
+    // 12*16 = 192 so this doesn't fit.  We only have
+    // room for 10*16=160 in the double buffer, we do
+    // that then we have room for 808-672 bytes of data.
+    BOOST_CHECK(sr.push_back(SortNode(), 16));
+    BOOST_CHECK_EQUAL(10, sr.capacity());
+    for(int i = 9; i<10; i++) {
+      BOOST_CHECK(sr.push_back(SortNode(), 16));
+      BOOST_CHECK_EQUAL(10, sr.capacity());
+      BOOST_CHECK_EQUAL(i+1, sr.size());
+    }    
+    BOOST_CHECK(!sr.push_back(SortNode(), 16));
+  }
+  {
+    SortRun sr(1024);
+    for(int i = 0; i<8; i++) {
+      BOOST_CHECK(sr.push_back(SortNode(), 64));
+      BOOST_CHECK_EQUAL(8, sr.capacity());
+      BOOST_CHECK_EQUAL(i+1, sr.size());
+    }
+    BOOST_CHECK(sr.push_back(SortNode(), 64));
+    BOOST_CHECK_EQUAL(12, sr.capacity());
+    // We got an underestimate of record size so
+    // we waste some space on SortNodes
+    BOOST_CHECK(!sr.push_back(SortNode(), 1024));
+  }
+  {
+    SortRun sr(1024);
+    for(int i = 0; i<8; i++) {
+      BOOST_CHECK(sr.push_back(SortNode(), 64));
+      BOOST_CHECK_EQUAL(8, sr.capacity());
+      BOOST_CHECK_EQUAL(i+1, sr.size());
+    }
+    BOOST_CHECK(sr.push_back(SortNode(), 64));
+    BOOST_CHECK_EQUAL(12, sr.capacity());
+    // We got an overestimate of record size but 
+    // there isn't enough room to reallocate.
+    // At the end of the following loop we have
+    // 9*80 + 3*76 = 954 bytes.
+    for(int i = 9; i<12; i++) {
+      BOOST_CHECK(sr.push_back(SortNode(), 60));
+      BOOST_CHECK_EQUAL(12, sr.capacity());
+      BOOST_CHECK_EQUAL(i+1, sr.size());
+    }    
+    BOOST_CHECK(!sr.push_back(SortNode(), 64));
+  }
+  {
+    SortRun sr(1024);
+    for(int i = 0; i<8; i++) {
+      BOOST_CHECK(sr.push_back(SortNode(), 64));
+      BOOST_CHECK_EQUAL(8, sr.capacity());
+      BOOST_CHECK_EQUAL(i+1, sr.size());
+    }
+    BOOST_CHECK(sr.push_back(SortNode(), 64));
+    BOOST_CHECK_EQUAL(12, sr.capacity());
+    // We got an overestimate of record size but 
+    // there actually IS enough room to realloc.
+    // At the end of the following loop we have
+    // 9*80 + 3*32 = 816 bytes.   This leaves us with
+    // room to realloc to 13 slots; but this isn't 
+    // enough to warrant doing it so it is skipped.
+    for(int i = 9; i<12; i++) {
+      BOOST_CHECK(sr.push_back(SortNode(), 16));
+      BOOST_CHECK_EQUAL(12, sr.capacity());
+      BOOST_CHECK_EQUAL(i+1, sr.size());
+    }    
+    BOOST_CHECK(!sr.push_back(SortNode(), 64));
+  }
+  {
+    SortRun sr(1024);
+    for(int i = 0; i<8; i++) {
+      BOOST_CHECK(sr.push_back(SortNode(), 64));
+      BOOST_CHECK_EQUAL(8, sr.capacity());
+      BOOST_CHECK_EQUAL(i+1, sr.size());
+    }
+    BOOST_CHECK(sr.push_back(SortNode(), 64));
+    BOOST_CHECK_EQUAL(12, sr.capacity());
+    // We got an overestimate of record size but 
+    // there actually IS enough room to realloc.
+    // At the end of the following loop we have
+    // 9*80 + 3*17 = 771 bytes.   This leaves us with
+    // room to realloc to 15 slots which is more
+    // than a 10% increase so we do it.
+    for(int i = 9; i<12; i++) {
+      BOOST_CHECK(sr.push_back(SortNode(), 1));
+      BOOST_CHECK_EQUAL(12, sr.capacity());
+      BOOST_CHECK_EQUAL(i+1, sr.size());
+    }    
+    for(int i = 12; i<15; i++) {    
+      BOOST_CHECK(sr.push_back(SortNode(), 1));
+      BOOST_CHECK_EQUAL(15, sr.capacity());
+      BOOST_CHECK_EQUAL(i+1, sr.size());
+    }
+    BOOST_CHECK(!sr.push_back(SortNode(), 1));
+  }
+}
+
 BOOST_AUTO_TEST_CASE(testSimpleScheduler)
 {
   DynamicRecordContext ctxt;

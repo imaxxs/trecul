@@ -877,6 +877,96 @@ public:
   void setReturnAddress(RuntimeOperator * op, int32_t port);
 };
 
+class SortNode
+{
+public:
+  // Should we make the prefix bigger since
+  // the padding is there or should be look
+  // at storing an index instead of a pointer?
+  // Probably the former unless we copied the
+  // records into a contiguous buffer so
+  // that we could arrange a 32-bit address
+  // relative to a known base (that could be squirreled
+  // away in compare function's state).
+  uint32_t KeyPrefix;
+  RecordBuffer Value;
+  SortNode()
+    :
+    KeyPrefix(0)
+  {
+  }
+
+  SortNode(uint32_t keyPrefix, RecordBuffer val)
+    :
+    KeyPrefix(keyPrefix),
+    Value(val)
+  {
+  }
+};
+
+class SortRun
+{
+public:
+  typedef SortNode* iterator;
+private:
+  // The storage for sort nodes.
+  SortNode * mBegin;
+  SortNode * mFilled;
+  SortNode * mEnd;
+  // Statistics 
+  uint64_t mSortSz;
+  uint64_t mMemoryAllowed;
+  double mReallocThreshold;
+  void capacity(std::size_t numRecords);
+  bool push_back_with_realloc(const SortNode& n, std::size_t dataLen);
+public:
+  SortRun(std::size_t memoryAllowed);
+  ~SortRun();
+  bool push_back(const SortNode& n, std::size_t dataLen)
+  {
+    uint64_t newSz = mSortSz + dataLen;
+    if (newSz > mMemoryAllowed) {
+      // TODO: Handle bad case in which we way overallocated
+      // space for sort nodes.  Give some back and try again.
+      // Perhaps we can't really do the give back without
+      // using a bunch of additional memory.
+      return false;
+    }
+    if (mFilled != mEnd) {
+      *mFilled++ = n;
+      mSortSz = newSz;
+      return true;
+    } else {
+      return push_back_with_realloc(n, dataLen);
+    }
+  }
+  void clear();
+  iterator begin() 
+  {
+    return mBegin;
+  }
+  iterator end()
+  {
+    return mFilled;
+  }
+  const SortNode& front() const
+  {
+    return *mBegin;
+  }
+  std::size_t memory() const
+  {
+    return mSortSz;
+  }
+  std::ptrdiff_t capacity() const
+  {
+    return mEnd - mBegin;
+  }
+  std::ptrdiff_t size() const
+  {
+    return mFilled - mBegin;
+  }
+};
+
 class LogicalSort : public LogicalOperator
 {
 private:
