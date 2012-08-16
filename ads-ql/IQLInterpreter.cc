@@ -2716,7 +2716,8 @@ void IQLTransferModule2::execute(RecordBuffer * sources,
   // TODO: Handle move semantics
   BOOST_ASSERT(!isSourceMove[0] && !isSourceMove[1]);
   // TODO: Handle arbitrary number of inputs.
-  (*mCopyFunction)((char *) sources[0].Ptr, (char *) sources[1].Ptr, (char *) target.Ptr, ctxt);  ctxt->clear();  
+  (*mCopyFunction)((char *) sources[0].Ptr, (char *) sources[1].Ptr, (char *) target.Ptr, ctxt);  
+  ctxt->clear();  
 }
 
 IQLUpdateModule::IQLUpdateModule(const std::string& funName, 
@@ -2748,6 +2749,7 @@ void IQLUpdateModule::initImpl()
 void IQLUpdateModule::execute(RecordBuffer & source, RecordBuffer target, class InterpreterContext * ctxt) const
 {
     (*mFunction)((char *) source.Ptr, (char *) target.Ptr, ctxt);    
+    ctxt->clear();
 }
 
 RecordTypeInPlaceUpdate::RecordTypeInPlaceUpdate(class DynamicRecordContext& recCtxt, 
@@ -3491,11 +3493,13 @@ void IQLAggregateModule::executeInit(RecordBuffer & source,
   BOOST_ASSERT(target == RecordBuffer());
   target = mAggregateMalloc.malloc();
   (*mInitFunction)((char *) source.Ptr, (char *) target.Ptr, ctxt);      
+  ctxt->clear();
 }
 
 void IQLAggregateModule::executeUpdate(RecordBuffer source, RecordBuffer target, class InterpreterContext * ctxt) const
 {
   (*mUpdateFunction)((char *) source.Ptr, (char *) target.Ptr, ctxt);      
+  ctxt->clear();
 }
 
 void IQLAggregateModule::executeTransfer(RecordBuffer & source, 
@@ -3505,6 +3509,7 @@ void IQLAggregateModule::executeTransfer(RecordBuffer & source,
   BOOST_ASSERT(target == RecordBuffer());
   target = mTransferMalloc.malloc();
   (*mTransferFunction)((char *) source.Ptr, (char *) target.Ptr, ctxt);      
+  ctxt->clear();
 }
 
 void IQLAggregateModule::executeTransfer(RecordBuffer & source1, 
@@ -3517,5 +3522,6 @@ void IQLAggregateModule::executeTransfer(RecordBuffer & source1,
   (*((LLVMFuncType2) mTransferFunction))((char *) source1.Ptr, 
 					 (char *) source2.Ptr, 
 					 (char *) target.Ptr, ctxt);      
+  ctxt->clear();
 }
 
