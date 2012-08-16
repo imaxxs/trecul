@@ -72,7 +72,7 @@ SortRun::SortRun(std::size_t memoryAllowed)
 
 SortRun::~SortRun()
 {
-  delete [] mBegin;
+  clear();
 }
 
 void SortRun::capacity(std::size_t numRecords)
@@ -127,8 +127,9 @@ bool SortRun::push_back_with_realloc(const SortNode& n, std::size_t dataLen)
 
 void SortRun::clear()
 {
-  mFilled = mBegin;
-  mSortSz = sizeof(SortNode)*capacity();
+  delete [] mBegin;
+  mFilled = mBegin = mEnd = 0;
+  mSortSz = 0;
 }
 
 class SortWriterContext
@@ -1197,6 +1198,8 @@ void RuntimeSortOperator::writeSortRun(SortRun & sortRuns)
 			tmpDir %
 			tmpStr).str();
   mSortFiles.push_back(mWriterType->mFile);
+  // std::cout << "Operator " << this << " writing sort run: " << mWriterType->mFile.c_str() <<
+  //   "; size: " << sortRuns.size() << "; memory: " << sortRuns.memory() << std::endl;
   mWriter->start();
   // Write out sort run
   for(mSortRunIt = sortRuns.begin(); 
@@ -1217,6 +1220,28 @@ void RuntimeSortOperator::buildMergeGraph()
   BOOST_ASSERT(mMergeTypes.size() == 0);
   BOOST_ASSERT(mMergeOps.size() == 0);
   BOOST_ASSERT(mChannels.size() == 0);
+  const RuntimeSortOperatorType & myType(getMyOperatorType());
+  // How much memory do we have for input buffers?
+  // TODO: At what point are we better off doing a multi stage
+  // merge?  
+  // TODO: We're breaking contract by enforcing a minimum page size.  In this
+  // case we MUST use a multi-pass merge.
+  // Window size for reads.  Make a multiple of page size (or a guess
+  // as to page size).
+  static const std::size_t pageSz(4096);
+  static const std::size_t maxWindowSz(1024*1024);  
+  std::size_t windowSz = 
+    buffer_type::getWindowSize(myType.mMemoryAllowed/mSortFiles.size());
+  windowSz = pageSz*(windowSz / pageSz);
+  // if (windowSz == 0) {
+  //   std::cout << "Warning: enforcing minimum page size" << std::endl;
+  // }
+  windowSz = (std::max)(pageSz, (std::min)(windowSz, maxWindowSz));
+
+  // std::cout << "Merging: num files: " << mSortFiles.size() <<
+  //   "; window size: " << windowSz << 
+  //   "; total memory: " << myType.mMemoryAllowed << std::endl;
+  // Configure the graph
   for(std::vector<std::string>::iterator it = mSortFiles.begin();
       it != mSortFiles.end();
       ++it) {
@@ -1227,6 +1252,7 @@ void RuntimeSortOperator::buildMergeGraph()
     op_type * readOpType = new op_type(getMyOperatorType().mDeserialize,
 				       getMyOperatorType().mMalloc,
 				       files,
+				       windowSz,
 				       true);
     mMergeTypes.push_back(readOpType);
     mMergeOps.push_back(readOpType->create(getServices()));
@@ -1274,6 +1300,9 @@ void RuntimeSortOperator::buildMergeGraph()
 
 void RuntimeSortOperator::freeMergeGraph()
 {
+  // if(mMergeOps.size()) {
+  //   std::cout << "Completed merge" << std::endl;
+  // }
   getServices().shutdownAndRemoveOperators(mMergeOps.begin(), mMergeOps.end());
   getServices().removeChannels(mChannels.begin(), mChannels.end());
   for(std::vector<RuntimeOperatorType *>::iterator it =  mMergeTypes.begin();

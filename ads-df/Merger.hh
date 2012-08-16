@@ -73,6 +73,14 @@ public:
   typedef _AsyncFileTraits file_system_type;
   typedef typename _AsyncFileTraits::filesystem_type filesystem_type;
   typedef typename _AsyncFileTraits::file_type file_type;
+
+  // Given an amount of available memory; what window size to
+  // request?  Since this is using a double buffering policy
+  // the window size is half the memory size.
+  static std::size_t getWindowSize(std::size_t memorySize)
+  {
+    return memorySize / 2;
+  }
 private:
 
   /**
@@ -204,9 +212,8 @@ private:
     // the current buffer of if the amount to read is less than our commitment.
     Block & currentBlock(mBlocks[mCurrent]);
 
-    if (currentBlock.mMark && 
-	(currentBlock.mPtr < currentBlock.mMark))
-      throw std::runtime_error("Internal error currentBlock.mPtr < currentBlock.mMark");
+    BOOST_ASSERT(NULL == currentBlock.mMark ||
+		 currentBlock.mPtr >= currentBlock.mMark);
     uint8_t * keepStart = currentBlock.mMark ? currentBlock.mMark : currentBlock.mPtr;
     std::size_t ptrOffset = std::size_t(currentBlock.mPtr - keepStart);
     std::size_t bufUse = std::size_t(currentBlock.mEnd - keepStart);
@@ -486,6 +493,8 @@ public:
   RecordTypeDeserialize mDeserialize;
   // Create new records
   RecordTypeMalloc mMalloc;
+  // Input buffer size for reads
+  std::size_t mInputBufferSize;
   // Should I delete file on completion (e.g. sort run).
   // This is not fully general and won't work properly
   // if multiple operators share chunks of the same underlying file.
@@ -500,6 +509,7 @@ public:
     ar & BOOST_SERIALIZATION_NVP(mFile);
     ar & BOOST_SERIALIZATION_NVP(mDeserialize);
     ar & BOOST_SERIALIZATION_NVP(mMalloc);
+    ar & BOOST_SERIALIZATION_NVP(mInputBufferSize);
     ar & BOOST_SERIALIZATION_NVP(mDeleteOnCompletion);
   }
   InternalFileParserOperatorType()
@@ -514,6 +524,7 @@ public:
 				 const std::string& file)
     :
     RuntimeOperatorType("InternalFileParserOperatorType"),
+    mInputBufferSize(128*1024),
     mDeleteOnCompletion(false)
   {
     // Expand file name globbing
@@ -533,12 +544,14 @@ public:
   InternalFileParserOperatorType(const RecordTypeDeserialize& deserialize,
 				 const RecordTypeMalloc& mallocFn,
 				 const chunk_type& chunks,
+				 std::size_t inputBufferSize,
 				 bool deleteOnCompletion)
     :
     RuntimeOperatorType("InternalFileParserOperatorType"),
     mFile(chunks),
     mDeserialize(deserialize),
     mMalloc(mallocFn),
+    mInputBufferSize(inputBufferSize),
     mDeleteOnCompletion(deleteOnCompletion)
   {
   }
@@ -638,7 +651,7 @@ public:
 	// Allocate a new input buffer for the file in question.
 	mInputBuffer = new _InputBuffer(mFileSystem,
 					(*mFileIt)->getFilename().c_str(), 
-					1024*1024,
+					getMyOperatorType().mInputBufferSize,
 					(*mFileIt)->getBegin(),
 					(*mFileIt)->getEnd());
 
@@ -647,7 +660,7 @@ public:
 	  {
 	    // Open the next window
 	    {
-	      std::size_t windowSize = 1024*1024;
+	      std::size_t windowSize = getMyOperatorType().mInputBufferSize;
 	      mInputBuffer->open(windowSize, mBuffer);
 	      mBufferIt = mBuffer;
 	      mBufferEnd = mBuffer + windowSize;
