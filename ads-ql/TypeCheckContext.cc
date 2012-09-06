@@ -945,14 +945,14 @@ const FieldType * TypeCheckContext::buildLeast(const std::vector<const FieldType
 const FieldType * TypeCheckContext::buildIsNull(const std::vector<const FieldType *>& args)
 {
   if (args.size() != 2) 
-    throw std::runtime_error("ISNULL takes exactly two arguments");
+    throw std::runtime_error("IFNULL takes exactly two arguments");
   // Don't allow literal NULL for first argument
   if (args[0]->GetEnum() == FieldType::NIL) {
-    throw std::runtime_error("ISNULL cannot take NULL as first argument");
+    throw std::runtime_error("IFNULL cannot take NULL as first argument");
   }
   // Allow implicit conversion of second arg to first.
   if (NULL == castTo(args[1], args[0])) {
-    throw std::runtime_error((boost::format("ISNULL cannot implicitly cast "
+    throw std::runtime_error((boost::format("IFNULL cannot implicitly cast "
 					    "from %1% to %2%") %
 			      args[1]->toString() % 
 			      args[0]->toString()).str());

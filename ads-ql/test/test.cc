@@ -5639,7 +5639,8 @@ BOOST_AUTO_TEST_CASE(testIQLIsNullNullable)
   testIsNull(true);
 }
 
-void testIsNullFunction(bool isNullable1, bool isNullable2)
+void testIsNullFunction(bool isNullable1, bool isNullable2,
+			const std::string& fn)
 {
   DynamicRecordContext ctxt;
   std::vector<RecordMember> members;
@@ -5651,7 +5652,7 @@ void testIsNullFunction(bool isNullable1, bool isNullable2)
 
   // Simple Transfer of everything
   RecordTypeTransfer t1(ctxt, "xfer1", recordType.get(), 
-			"ISNULL(a,c) AS b"
+			(boost::format("%1%(a,c) AS b") % fn).str()
 			);
   
   // Actually execute this thing.  
@@ -5697,10 +5698,17 @@ void testIsNullFunction(bool isNullable1, bool isNullable2)
 
 BOOST_AUTO_TEST_CASE(testIQLIsNullFunction)
 {
-  testIsNullFunction(false, false);
-  testIsNullFunction(false, true);
-  testIsNullFunction(true, false);
-  testIsNullFunction(true, true);
+  testIsNullFunction(false, false, "IFNULL");
+  testIsNullFunction(false, true, "IFNULL");
+  testIsNullFunction(true, false, "IFNULL");
+  testIsNullFunction(true, true, "IFNULL");
+
+  // Backward compatibility.  Someday this should
+  // go away...
+  testIsNullFunction(false, false, "ISNULL");
+  testIsNullFunction(false, true, "ISNULL");
+  testIsNullFunction(true, false, "ISNULL");
+  testIsNullFunction(true, true, "ISNULL");
 }
 
 BOOST_AUTO_TEST_CASE(testIQLIsNullFunctionTypePromotion)
@@ -5713,7 +5721,7 @@ BOOST_AUTO_TEST_CASE(testIQLIsNullFunctionTypePromotion)
   
   // Simple Transfer of everything
   RecordTypeTransfer t1(ctxt, "xfer1", recordType.get(), 
-			"ISNULL(a,c) AS b"
+			"IFNULL(a,c) AS b"
 			);
   
   // Actually execute this thing.  
@@ -5750,7 +5758,7 @@ BOOST_AUTO_TEST_CASE(testIQLIsNullFunctionTypePromotionNegative)
   try {
     // Simple Transfer of everything
     RecordTypeTransfer t1(ctxt, "xfer1", recordType.get(), 
-			  "ISNULL(a,c) AS b"
+			  "IFNULL(a,c) AS b"
 			  );
     BOOST_CHECK(false);
   } catch (std::exception & ex) {

@@ -899,7 +899,8 @@ IQLToLLVMValueRef IQLToLLVMBuildCall(IQLCodeGenerationContextRef ctxtRef,
     return IQLToLLVMBuildLeastGreatest(ctxt, args, retType, true);
   } else if (boost::algorithm::iequals(f, "greatest")) {
     return IQLToLLVMBuildLeastGreatest(ctxt, args, retType, false);
-  } else if (boost::algorithm::iequals(f, "isnull")) {
+  } else if (boost::algorithm::iequals(f, "isnull") ||
+	     boost::algorithm::iequals(f, "ifnull")) {
     return IQLToLLVMBuildIsNullFunction(ctxt, args, retType);
   } else {
     return InternalBuildCall(ctxt, f, args, retType);
@@ -3311,7 +3312,7 @@ void IQLToLLVMBuildSetNullableValue(CodeGenerationContext * ctxt,
 // if true this is allowed.  It is incumbent on the caller
 // to know if sufficient runtime checks have been performed
 // in order for us to safely coerce a nullable value into
-// a nonnullable one (e.g. ISNULL(x,y) is the canonical example).
+// a nonnullable one (e.g. IFNULL(x,y) is the canonical example).
 void IQLToLLVMBuildSetNullableValue(CodeGenerationContext * ctxt,
 				    const IQLToLLVMLValue * lval,
 				    IQLToLLVMValueRef val,
@@ -3877,7 +3878,8 @@ IQLFieldTypeRef IQLTypeCheckCall(IQLTypeCheckContextRef ctxtRef,
   if (boost::algorithm::iequals(f, "least") ||
       boost::algorithm::iequals(f, "greatest")) {
     return wrap(ctxt->buildLeast(args));
-  } else if (boost::algorithm::iequals(f, "isnull")) {
+  } else if (boost::algorithm::iequals(f, "isnull") ||
+	     boost::algorithm::iequals(f, "ifnull")) {
     return wrap(ctxt->buildIsNull(args));
   }
   // TODO: Implement operator/function overloading.
