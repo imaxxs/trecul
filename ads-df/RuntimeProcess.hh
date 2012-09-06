@@ -253,6 +253,19 @@ public:
   DataflowScheduler& getScheduler(int32_t partition);
 };
 
+class AdsDfSpeculativeExecution
+{
+public:
+  enum Type { BOTH, NONE, MAP, REDUCE };
+private:
+  Type mType;
+public:
+  AdsDfSpeculativeExecution();
+  AdsDfSpeculativeExecution(const std::string& str);
+  const char * isMapEnabledString() const;
+  const char * isReduceEnabledString() const;
+};
+
 class PlanRunner
 {
 private:
@@ -288,7 +301,8 @@ public:
 			     const std::string& outputDir,
 			     int32_t numReduces,
 			     bool jvmReuse,
-			     bool useHp);
+			     bool useHp,
+			     AdsDfSpeculativeExecution speculative);
   static int run(int argc, char ** argv);
 };
 

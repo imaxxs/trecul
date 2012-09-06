@@ -49,6 +49,7 @@
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/constants.hpp>
 #include <boost/algorithm/string/split.hpp>
+#include <boost/algorithm/string/trim.hpp>
 #include <boost/program_options.hpp>
 #include <boost/shared_ptr.hpp>
 #include <boost/make_shared.hpp>
@@ -648,6 +649,42 @@ void HadoopSetup::setEnvironment()
   ::setenv("LIBHDFS_OPTS", "-Xmx100m", 0);
 }
 
+AdsDfSpeculativeExecution::AdsDfSpeculativeExecution()
+  :
+  mType(BOTH)
+{
+}
+
+AdsDfSpeculativeExecution::AdsDfSpeculativeExecution(const std::string& str)
+  :
+  mType(BOTH)
+{
+  std::string s = boost::algorithm::trim_copy(str);
+  boost::algorithm::to_upper(s);
+  if(boost::algorithm::equals(s, "BOTH")) {
+    mType = BOTH;
+  } else if(boost::algorithm::equals(s, "NONE")) {
+    mType = NONE;
+  } else if(boost::algorithm::equals(s, "MAP")) {
+    mType = MAP;
+  } else if(boost::algorithm::equals(s, "REDUCE")) {
+    mType = REDUCE;
+  } else {
+    throw std::runtime_error("speculative execution must one of both|none|map|reduce");
+  }
+}
+  
+
+const char * AdsDfSpeculativeExecution::isMapEnabledString() const
+{
+  return mType == BOTH || mType == MAP ? "true" : "false";
+}
+
+const char * AdsDfSpeculativeExecution::isReduceEnabledString() const
+{
+  return mType == BOTH || mType == REDUCE ? "true" : "false";
+}
+
 /**
  * Run an ads-df dataflow using Hadoop pipes.
  *
@@ -694,6 +731,7 @@ private:
   bool mJvmReuse;
   boost::filesystem::path mLocalPipesPath;
   std::string mLocalPipesChecksum;
+  AdsDfSpeculativeExecution mSpeculative;
 
   /**
    * Name of pipes executable in HDFS.  It goes into the
@@ -733,6 +771,7 @@ public:
   void setNumReducers(int32_t numReducers);
   void setJvmReuse(bool jvmReuse);
   void setJobQueue(const std::string& jobQueue);
+  void setSpeculativeExecution(AdsDfSpeculativeExecution s);
   std::string get() const;
   void copyFilesToHDFS();
   static int32_t copyFromLocal(const std::string& localPath,
@@ -787,6 +826,11 @@ void AdsPipesJobConf::setJobQueue(const std::string& jobQueue)
   mJobQueue = jobQueue;
 }
 
+void AdsPipesJobConf::setSpeculativeExecution(AdsDfSpeculativeExecution s)
+{
+  mSpeculative = s;
+}
+
 std::string AdsPipesJobConf::get() const
 {
   boost::format openBoilerPlateFormat(
@@ -808,6 +852,14 @@ std::string AdsPipesJobConf::get() const
 			      "  <property>\n"
 			      "    <name>mapred.job.shuffle.input.buffer.percent</name>\n"
 			      "    <value>0.5</value>\n"
+			      "  </property>\n"
+			      "  <property>\n"
+			      "    <name>mapreduce.map.speculative</name>\n"
+			      "    <value>%3%</value>\n"
+			      "  </property>\n"
+			      "  <property>\n"
+			      "    <name>mapreduce.reduce.speculative</name>\n"
+			      "    <value>%4%</value>\n"
 			      "  </property>\n"
 			      );
   boost::format mapperFormat(
@@ -880,7 +932,8 @@ std::string AdsPipesJobConf::get() const
 			       "  </property>\n" 
 			       );
 
-  std::string ret = (openBoilerPlateFormat % getPipesExecutableName() % jvmReuseProperty).str();
+  std::string ret = (openBoilerPlateFormat % getPipesExecutableName() % jvmReuseProperty %
+		     mSpeculative.isMapEnabledString() % mSpeculative.isReduceEnabledString()).str();
   std::string distCacheFiles;
   ret += (jobName % mName).str();
   if (mJobQueue.size()) {
@@ -1099,9 +1152,10 @@ int PlanRunner::runMapReduceJob(const std::string& mapProgram,
 				const std::string& outputDirArg,
 				bool useHp)
 {
+  AdsDfSpeculativeExecution speculative;
   return runMapReduceJob(mapProgram, reduceProgram, "", "",
 			 inputDirArg, outputDirArg,
-			 reduceProgram.size() ? 1 : 0, true, useHp);
+			 reduceProgram.size() ? 1 : 0, true, useHp, speculative);
 }
 
 int PlanRunner::runMapReduceJob(const std::string& mapProgram,
@@ -1112,8 +1166,9 @@ int PlanRunner::runMapReduceJob(const std::string& mapProgram,
 				bool jvmReuse,
 				bool useHp)
 {
+  AdsDfSpeculativeExecution speculative;
   return runMapReduceJob(mapProgram, reduceProgram, "", "", inputDirArg, 
-			 outputDirArg, numReduces, true, useHp);
+			 outputDirArg, numReduces, jvmReuse, useHp, speculative);
 }
 
 int PlanRunner::runMapReduceJob(const std::string& mapProgram,
@@ -1124,7 +1179,8 @@ int PlanRunner::runMapReduceJob(const std::string& mapProgram,
 				const std::string& outputDirArg,
 				int32_t numReduces,
 				bool jvmReuse,
-				bool useHp)
+				bool useHp,
+				AdsDfSpeculativeExecution speculative)
 {
   // Create a temporary work space for this job
   boost::shared_ptr<HdfsDelete> cleanup;
@@ -1151,6 +1207,7 @@ int PlanRunner::runMapReduceJob(const std::string& mapProgram,
   AdsPipesJobConf jobConf(jobDir);
   jobConf.setName(name);
   jobConf.setJobQueue(jobQueue);
+  jobConf.setSpeculativeExecution(speculative);
 
   std::string mapBuf;
   std::string emitFormat;
@@ -1283,6 +1340,8 @@ int PlanRunner::run(int argc, char ** argv)
     ("input", po::value<std::string>(), "input directory for jobs run through Hadoop pipes")
     ("output", po::value<std::string>(), "output directory for jobs run through Hadoop pipes")
     ("jobqueue", po::value<std::string>(), "job queue for jobs run through Hadoop pipes")
+    ("speculative-execution", po::value<std::string>(), 
+     "speculative execution settings for jobs run through Hadoop pipes (both|none|map|reduce)")
     ("proxy", "use proxy ads-hp-client for jobs run through Hadoop pipes")
     ;
 
@@ -1311,6 +1370,7 @@ int PlanRunner::run(int argc, char ** argv)
   pairs.push_back(std::make_pair("map", "proxy"));
   pairs.push_back(std::make_pair("map", "nojvmreuse"));
   pairs.push_back(std::make_pair("map", "jobqueue"));
+  pairs.push_back(std::make_pair("map", "speculative-execution"));
   if (!checkRequiredArgs(vm, pairs)) {
     std::cerr << desc << std::endl;
     return 1;    
@@ -1360,6 +1420,9 @@ int PlanRunner::run(int argc, char ** argv)
     std::string jobQueue(vm.count("jobqueue") ? 
 			 vm["jobqueue"].as<std::string>().c_str() : 
 			 "");
+    AdsDfSpeculativeExecution speculative(vm.count("speculative-execution") ?
+					  vm["speculative-execution"].as<std::string>().c_str() :
+					  "both");
 
     std::string mapProgram;
     readInputFile(vm["map"].as<std::string>(), mapProgram);
@@ -1394,7 +1457,8 @@ int PlanRunner::run(int argc, char ** argv)
 			   outputDir,
 			   reduces,
 			   jvmReuse,
-			   useHp);
+			   useHp,
+			   speculative);
   } else {
     std::string inputFile(vm["file"].as<std::string>());
     checkRegularFileExists(inputFile);
