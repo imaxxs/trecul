@@ -469,6 +469,7 @@ private:
   char mFieldSeparator;
   char mRecordSeparator;
   std::string mCommentLine;
+  const RecordType * mFormat;
 
   void internalCreate(class RuntimePlanBuilder& plan);  
   std::string readFormatFile(const std::string& formatFile);

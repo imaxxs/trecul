@@ -37,6 +37,7 @@
 #include <boost/algorithm/string.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/make_shared.hpp>
+#include <boost/tokenizer.hpp>
 #include "Merger.hh"
 #include "HdfsOperator.hh"
 #include "ConstantScan.hh"
@@ -429,7 +430,8 @@ LogicalFileRead::LogicalFileRead()
   mBucketed(false),
   mSkipHeader(false),
   mFieldSeparator('\t'),
-  mRecordSeparator('\n')
+  mRecordSeparator('\n'),
+  mFormat(NULL)
 {
 }
 
@@ -445,6 +447,7 @@ std::string LogicalFileRead::readFormatFile(const std::string& formatFile)
 void LogicalFileRead::check(PlanCheckContext& ctxt)
 {
   const LogicalOperatorParam * formatParam=NULL;
+  std::vector<std::string> referenced;
   // Validate the parameters
   for(const_param_iterator it = begin_params();
       it != end_params();
@@ -485,6 +488,17 @@ void LogicalFileRead::check(PlanCheckContext& ctxt)
 	formatParam = &*it;
       } else if (it->equals("mode")) {
 	mMode = getStringValue(ctxt, *it);
+      } else if (it->equals("output")) {
+	std::string str = boost::get<std::string>(it->Value);
+	typedef boost::tokenizer<boost::char_separator<char> > tokenizer;
+	boost::char_separator<char> sep(",");
+	tokenizer tok(str, sep);
+	for(tokenizer::iterator tokIt = tok.begin();
+	    tokIt != tok.end();
+	    ++tokIt) {
+	  // TODO: Validate that these are valid field names.
+	 referenced.push_back(boost::trim_copy(*tokIt));
+	}
       } else if (it->equals("bucketed")) {
 	mBucketed = getBooleanValue(ctxt, *it);
       } else if (it->equals("broadcast")) {
@@ -509,13 +523,29 @@ void LogicalFileRead::check(PlanCheckContext& ctxt)
     ctxt.logError(*this, "comment only supported when mode is \"text\"");
   }
 
+  if (boost::algorithm::iequals("binary", mMode) &&
+      referenced.size()) {
+    ctxt.logError(*this, "output only supported when mode is \"text\"");
+  }
+
   // We must have format parameter.
   if (NULL == formatParam || 0==mStringFormat.size()) {
     ctxt.logError(*this, "Must specify format argument");
   } else {
     try {
       IQLRecordTypeBuilder bld(ctxt, mStringFormat, false);
-      getOutput(0)->setRecordType(bld.getProduct());
+      mFormat = bld.getProduct();
+      // Default referenced is all columns.
+      if (0 == referenced.size()) {
+	for(RecordType::const_member_iterator m = mFormat->begin_members(),
+	      e = mFormat->end_members(); m != e; ++m) {
+	  referenced.push_back(m->GetName());
+	}
+      }
+      
+      getOutput(0)->setRecordType(RecordType::get(ctxt, mFormat, 
+						  referenced.begin(), 
+						  referenced.end()));
     } catch(std::exception& ex) {
       ctxt.logError(*this, *formatParam, ex.what());
     }
@@ -544,7 +574,7 @@ void LogicalFileRead::internalCreate(class RuntimePlanBuilder& plan)
 					      mFieldSeparator,
 					      mRecordSeparator,
 					      getOutput(0)->getRecordType(),
-					      NULL,
+					      mFormat,
 					      mCommentLine.c_str());
     sot->setSkipHeader(mSkipHeader);
     opType = sot;
@@ -553,7 +583,7 @@ void LogicalFileRead::internalCreate(class RuntimePlanBuilder& plan)
 					  mFieldSeparator,
 					  mRecordSeparator,
 					  getOutput(0)->getRecordType(),
-					  NULL,
+					  mFormat,
 					  mCommentLine.c_str());
     tot->setSkipHeader(mSkipHeader);
     opType = tot;
