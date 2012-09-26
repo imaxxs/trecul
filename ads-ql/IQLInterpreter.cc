@@ -394,6 +394,14 @@ extern "C" void InternalDecimalCmp(decimal128 * lhs, decimal128 * rhs, int32_t *
     *result *= -1;
 }
 
+extern "C" void InternalDecimalRound(decimal128 * lhs, int32_t precision, decimal128 * result, InterpreterContext * ctxt) {
+  decNumber a,b;
+  decimal128ToNumber(lhs, &a);
+  decNumberFromInt32(&b, -precision);
+  decNumberRescale(&a, &a, &b, ctxt->getDecimalContext());
+  decimal128FromNumber(result, &a, ctxt->getDecimalContext());
+}
+
 extern "C" void InternalVarcharAdd(Varchar* lhs, Varchar* rhs, Varchar* result, InterpreterContext * ctxt) {
   result->Size = lhs->Size + rhs->Size;
   char * buf = (char *) ctxt->malloc(result->Size + 1);
@@ -958,13 +966,18 @@ static LLVMValueRef LoadAndValidateExternalFunction(LLVMBase& b,
 llvm::Value * LLVMBase::LoadAndValidateExternalFunction(const char * externalFunctionName, 
 							llvm::Type * funTy)
 {
+  return LoadAndValidateExternalFunction(externalFunctionName, externalFunctionName, funTy);
+}
+
+llvm::Value * LLVMBase::LoadAndValidateExternalFunction(const char * treculName,
+							const char * implName, 
+							llvm::Type * funTy)
+{
   void * addr;
-  if (NULL == (addr=llvm::sys::DynamicLibrary::SearchForAddressOfSymbol(externalFunctionName)))
-    throw std::runtime_error((boost::format("Unable to find symbol for external library function: %1%") % externalFunctionName).str());
-  mExternalFunctionsIdx[addr] = externalFunctionName;
-  return llvm::unwrap(LLVMAddFunction(mContext->LLVMModule, 
-				      externalFunctionName, 
-				      llvm::wrap(funTy)));
+  if (NULL == (addr=llvm::sys::DynamicLibrary::SearchForAddressOfSymbol(implName)))
+    throw std::runtime_error((boost::format("Unable to find symbol for external library function: %1%") % implName).str());
+  mExternalFunctionsIdx[addr] = implName;
+  return mContext->addExternalFunction(treculName, implName, funTy);
 }
 
 void LLVMBase::CreateMemcpyIntrinsic()
@@ -1222,6 +1235,14 @@ void LLVMBase::InitializeLLVM()
   argumentTypes[numArguments++] = mContext->LLVMDecContextPtrType;
   funTy = LLVMFunctionType(LLVMVoidTypeInContext(mContext->LLVMContext), &argumentTypes[0], numArguments, 0);
   libFunVal = ::LoadAndValidateExternalFunction(*this, "InternalDecimalCmp", funTy);
+
+  numArguments=0;
+  argumentTypes[numArguments++] = LLVMPointerType(mContext->LLVMDecimal128Type, 0);
+  argumentTypes[numArguments++] = LLVMInt32TypeInContext(mContext->LLVMContext);
+  argumentTypes[numArguments++] = LLVMPointerType(mContext->LLVMDecimal128Type, 0);
+  argumentTypes[numArguments++] = mContext->LLVMDecContextPtrType;
+  funTy = LLVMFunctionType(LLVMVoidTypeInContext(mContext->LLVMContext), &argumentTypes[0], numArguments, 0);
+  LoadAndValidateExternalFunction("round", "InternalDecimalRound", llvm::unwrap(funTy));
 
   numArguments = 0;
   argumentTypes[numArguments++] = LLVMPointerType(mContext->LLVMVarcharType, 0);
@@ -1737,6 +1758,16 @@ void LLVMBase::InitializeLLVM()
   argumentTypes[numArguments++] = LLVMInt32TypeInContext(mContext->LLVMContext);
   funTy = LLVMFunctionType(LLVMInt32TypeInContext(mContext->LLVMContext), &argumentTypes[0], numArguments, 0);
   libFunVal = ::LoadAndValidateExternalFunction(*this, "SuperFastHash", funTy);
+
+  numArguments = 0;
+  argumentTypes[numArguments++] = LLVMDoubleTypeInContext(mContext->LLVMContext);
+  funTy = LLVMFunctionType(LLVMDoubleTypeInContext(mContext->LLVMContext), &argumentTypes[0], numArguments, 0);
+  libFunVal = ::LoadAndValidateExternalFunction(*this, "ceil", funTy);
+
+  numArguments = 0;
+  argumentTypes[numArguments++] = LLVMDoubleTypeInContext(mContext->LLVMContext);
+  funTy = LLVMFunctionType(LLVMDoubleTypeInContext(mContext->LLVMContext), &argumentTypes[0], numArguments, 0);
+  libFunVal = ::LoadAndValidateExternalFunction(*this, "floor", funTy);
 
   numArguments = 0;
   argumentTypes[numArguments++] = LLVMDoubleTypeInContext(mContext->LLVMContext);

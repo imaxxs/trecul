@@ -48,6 +48,12 @@
 #include <boost/test/unit_test.hpp>
 #include <boost/test/floating_point_comparison.hpp>
 
+// Forward decls
+bool decimalEquals(const char * literal,
+		   const RecordType * ty,
+		   const char * field,
+		   RecordBuffer buf);
+
 boost::shared_ptr<RecordType> createLogInputType(DynamicRecordContext & ctxt)
 {
   std::vector<RecordMember> members;
@@ -3510,7 +3516,7 @@ BOOST_AUTO_TEST_CASE(testIQLFunctionCallDouble)
   boost::shared_ptr<RecordType> recordType(new RecordType(members));
   
   // Simple Transfer of everything
-  RecordTypeTransfer t1(ctxt, "xfer1", recordType.get(), "a,c,b AS d, a+b+c AS e, b+77.21e+01 AS f, b*1.0e-01 AS g, log(a) AS h, exp(a) as i");
+  RecordTypeTransfer t1(ctxt, "xfer1", recordType.get(), "a,c,b AS d, a+b+c AS e, b+77.21e+01 AS f, b*1.0e-01 AS g, log(a) AS h, exp(a) as i, floor(a) as j, ceil(a) as k");
 
   // Actually execute this thing.
   RecordBuffer inputBuf = recordType->GetMalloc()->malloc();
@@ -3528,6 +3534,39 @@ BOOST_AUTO_TEST_CASE(testIQLFunctionCallDouble)
   BOOST_CHECK_EQUAL(23.023, t1.getTarget()->getDouble("g", outputBuf));
   BOOST_CHECK_EQUAL(log(23.88), t1.getTarget()->getDouble("h", outputBuf));
   BOOST_CHECK_EQUAL(exp(23.88), t1.getTarget()->getDouble("i", outputBuf));
+  BOOST_CHECK_EQUAL(floor(23.88), t1.getTarget()->getDouble("j", outputBuf));
+  BOOST_CHECK_EQUAL(ceil(23.88), t1.getTarget()->getDouble("k", outputBuf));
+  recordType->getFree().free(inputBuf);
+  t1.getTarget()->getFree().free(outputBuf);
+}
+
+BOOST_AUTO_TEST_CASE(testIQLFunctionCallDecimal)
+{
+  DynamicRecordContext ctxt;
+  InterpreterContext runtimeCtxt;
+  std::vector<RecordMember> members;
+  members.push_back(RecordMember("a", DecimalType::Get(ctxt)));
+  members.push_back(RecordMember("b", DecimalType::Get(ctxt, true)));
+  boost::shared_ptr<RecordType> recordType(new RecordType(members));
+  
+  RecordTypeTransfer t1(ctxt, "xfer1", recordType.get(), "round(a, 2) AS a"
+			", round(a, -2) AS b"
+			", round(b, 4) AS c");
+
+  RecordBuffer inputBuf = recordType->GetMalloc()->malloc();
+  ::decimal128FromString(recordType->getMemberOffset("a").getDecimalPtr(inputBuf),
+			 "123456.8234", 
+			 runtimeCtxt.getDecimalContext());
+  ::decimal128FromString(recordType->getMemberOffset("b").getDecimalPtr(inputBuf),
+			 "-123456.82349234", 
+			 runtimeCtxt.getDecimalContext());
+  RecordBuffer outputBuf = t1.getTarget()->GetMalloc()->malloc();
+  t1.execute(inputBuf, outputBuf, &runtimeCtxt, false);
+  BOOST_CHECK_EQUAL(true, decimalEquals("123456.82", t1.getTarget(), "a", outputBuf));
+  BOOST_CHECK_EQUAL(true, decimalEquals("123500.0", t1.getTarget(), "b", outputBuf));
+  BOOST_CHECK_EQUAL(true, decimalEquals("-123456.8235", t1.getTarget(), "c", outputBuf));
+  recordType->getFree().free(inputBuf);
+  t1.getTarget()->getFree().free(outputBuf);
 }
 
 BOOST_AUTO_TEST_CASE(testIQLFunctionCallString)
@@ -3571,6 +3610,8 @@ BOOST_AUTO_TEST_CASE(testIQLFunctionCallString)
   BOOST_CHECK_EQUAL(0, strcmp("    bbbb dfee", t1.getTarget()->getVarcharPtr("l", outputBuf)->Ptr));
   BOOST_CHECK_EQUAL(0, strcmp("CDEFGHIJK", t1.getTarget()->getVarcharPtr("m", outputBuf)->Ptr));
   BOOST_CHECK_EQUAL(0, strcmp("cdefghijk", t1.getTarget()->getVarcharPtr("n", outputBuf)->Ptr));
+  recordType->getFree().free(inputBuf);
+  t1.getTarget()->getFree().free(outputBuf);
 }
 
 void testDatediff(bool leftNullable, bool rightNullable)

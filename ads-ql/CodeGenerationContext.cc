@@ -528,6 +528,17 @@ void CodeGenerationContext::addInputRecordType(const char * name,
   recordTypes[name] = std::make_pair(argumentName, rec);
 }
 
+llvm::Value * CodeGenerationContext::addExternalFunction(const char * treculName,
+							 const char * implName,
+							 llvm::Type * funTy)
+{
+  mTreculNameToSymbol[treculName] = implName;
+  return llvm::Function::Create(llvm::dyn_cast<llvm::FunctionType>(funTy), 
+				llvm::GlobalValue::ExternalLinkage,
+				implName, llvm::unwrap(LLVMModule));
+  
+}
+
 void CodeGenerationContext::whileBegin()
 {
   // Unwrap to C++
@@ -686,20 +697,26 @@ CodeGenerationContext::buildGlobalConstArray(std::vector<const IQLToLLVMValue *>
 }
 
 IQLToLLVMValue::ValueType 
-CodeGenerationContext::buildCall(const char * f,
+CodeGenerationContext::buildCall(const char * treculName,
 				 const std::vector<const IQLToLLVMValue *> & args,
 				 llvm::Value * retTmp,
 				 const FieldType * retType)
 {
+  // Get the implementation name of the function.
+  std::map<std::string,std::string>::const_iterator it = mTreculNameToSymbol.find(treculName);
+  if (mTreculNameToSymbol.end() == it) {
+    throw std::runtime_error((boost::format("Unable to find implementation for "
+					    "function %1%") % treculName).str());
+  }
   llvm::LLVMContext & c(*llvm::unwrap(LLVMContext));
   llvm::IRBuilder<> * b = llvm::unwrap(LLVMBuilder);
 
   std::vector<LLVMValueRef> callArgs;
-  LLVMValueRef fn = LLVMGetNamedFunction(LLVMModule, f);
+  LLVMValueRef fn = LLVMGetNamedFunction(LLVMModule, it->second.c_str());
   if (fn == NULL) {
     throw std::runtime_error((boost::format("Call to function %1% passed type checking "
-					    "but function does not exist") %
-			      f).str());
+					    "but implementation function %2% does not exist") %
+			      treculName % it->second).str());
   }
   
   for(std::size_t i=0; i<args.size(); i++) {

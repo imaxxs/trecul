@@ -125,6 +125,9 @@ public:
   virtual ~LLVMBase();
   llvm::Value * LoadAndValidateExternalFunction(const char * externalFunctionName, 
 						llvm::Type * funTy);
+  llvm::Value * LoadAndValidateExternalFunction(const char * treculName, 
+						const char * implName, 
+						llvm::Type * funTy);
 };
 
 class IQLRecordBufferMethod

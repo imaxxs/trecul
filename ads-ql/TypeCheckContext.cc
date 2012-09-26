@@ -439,9 +439,16 @@ void TypeCheckContext::loadBuiltinFunctions()
   DynamicRecordContext & drc (ctxt->mContext);
   DoubleType * d = DoubleType::Get(drc);
   const FieldType * unaryDoubleOp = FunctionType::Get(drc, d, d);
+  mTypeCheckSymbolTable->add(fnPrefix, "ceil", unaryDoubleOp);
+  mTypeCheckSymbolTable->add(fnPrefix, "floor", unaryDoubleOp);
   mTypeCheckSymbolTable->add(fnPrefix, "sqrt", unaryDoubleOp);
   mTypeCheckSymbolTable->add(fnPrefix, "log", unaryDoubleOp);
   mTypeCheckSymbolTable->add(fnPrefix, "exp", unaryDoubleOp);
+  mTypeCheckSymbolTable->add(fnPrefix, "round", 
+			     FunctionType::Get(drc, 
+					       DecimalType::Get(drc), 
+					       Int32Type::Get(drc),
+					       DecimalType::Get(drc)));
   mTypeCheckSymbolTable->add(fnPrefix, "length", 
 			     FunctionType::Get(drc, 
 					       VarcharType::Get(drc), 

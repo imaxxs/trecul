@@ -282,6 +282,12 @@ public:
 private:
   bool mOwnsModule;
   class TreculSymbolTable * mSymbolTable;
+  // In some cases we want the Trecul name of a function
+  // to match the C function that provides the implementation
+  // and in other not.  Translate from Trecul name to implementation
+  // name here.  Note that this should be getting resolved during type
+  // check not during code generation.
+  std::map<std::string, std::string> mTreculNameToSymbol;
 public:
   LLVMContextRef LLVMContext;
   LLVMModuleRef LLVMModule;
@@ -425,6 +431,12 @@ public:
 			  const char * argumentName, 
 			  const RecordType * rec,
 			  const boost::dynamic_bitset<>& mask);
+  /**
+   * Add an external library function (C calling convention)
+   */
+  llvm::Value * addExternalFunction(const char * treculName,
+				    const char * implName,
+				    llvm::Type * funTy);
 
   /**
    * Build a while loop.
