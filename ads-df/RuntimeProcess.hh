@@ -302,7 +302,8 @@ public:
 			     int32_t numReduces,
 			     bool jvmReuse,
 			     bool useHp,
-			     AdsDfSpeculativeExecution speculative);
+			     AdsDfSpeculativeExecution speculative,
+			     int32_t timeout);
   static int run(int argc, char ** argv);
 };
 

@@ -721,6 +721,8 @@ const char * AdsDfSpeculativeExecution::isReduceEnabledString() const
  */
 class AdsPipesJobConf
 {
+public:
+  static const int32_t DEFAULT_TASK_TIMEOUT;
 private:
   std::string mJobDir;
   std::string mMapper;
@@ -732,6 +734,7 @@ private:
   boost::filesystem::path mLocalPipesPath;
   std::string mLocalPipesChecksum;
   AdsDfSpeculativeExecution mSpeculative;
+  int32_t mTaskTimeout;
 
   /**
    * Name of pipes executable in HDFS.  It goes into the
@@ -772,17 +775,21 @@ public:
   void setJvmReuse(bool jvmReuse);
   void setJobQueue(const std::string& jobQueue);
   void setSpeculativeExecution(AdsDfSpeculativeExecution s);
+  void setTaskTimeout(int32_t timeout);
   std::string get() const;
   void copyFilesToHDFS();
   static int32_t copyFromLocal(const std::string& localPath,
 			       const std::string& remotePath);
 };
 
+const int32_t AdsPipesJobConf::DEFAULT_TASK_TIMEOUT(600000);
+
 AdsPipesJobConf::AdsPipesJobConf(const std::string& jobDir)
   :
   mJobDir(jobDir),
   mNumReducers(0),
-  mJvmReuse(true)
+  mJvmReuse(true),
+  mTaskTimeout(DEFAULT_TASK_TIMEOUT)
 {
   // We assume that ads-df-pipes is in the same directory
   // as this exe
@@ -831,6 +838,11 @@ void AdsPipesJobConf::setSpeculativeExecution(AdsDfSpeculativeExecution s)
   mSpeculative = s;
 }
 
+void AdsPipesJobConf::setTaskTimeout(int32_t timeout)
+{
+  mTaskTimeout = timeout;
+}
+
 std::string AdsPipesJobConf::get() const
 {
   boost::format openBoilerPlateFormat(
@@ -860,6 +872,10 @@ std::string AdsPipesJobConf::get() const
 			      "  <property>\n"
 			      "    <name>mapreduce.reduce.speculative</name>\n"
 			      "    <value>%4%</value>\n"
+			      "  </property>\n"
+			      "  <property>\n"
+			      "    <name>mapreduce.task.timeout</name>\n"
+			      "    <value>%5%</value>\n"
 			      "  </property>\n"
 			      );
   boost::format mapperFormat(
@@ -933,7 +949,8 @@ std::string AdsPipesJobConf::get() const
 			       );
 
   std::string ret = (openBoilerPlateFormat % getPipesExecutableName() % jvmReuseProperty %
-		     mSpeculative.isMapEnabledString() % mSpeculative.isReduceEnabledString()).str();
+		     mSpeculative.isMapEnabledString() % mSpeculative.isReduceEnabledString() %
+		     mTaskTimeout).str();
   std::string distCacheFiles;
   ret += (jobName % mName).str();
   if (mJobQueue.size()) {
@@ -1155,7 +1172,8 @@ int PlanRunner::runMapReduceJob(const std::string& mapProgram,
   AdsDfSpeculativeExecution speculative;
   return runMapReduceJob(mapProgram, reduceProgram, "", "",
 			 inputDirArg, outputDirArg,
-			 reduceProgram.size() ? 1 : 0, true, useHp, speculative);
+			 reduceProgram.size() ? 1 : 0, true, useHp, speculative,
+			 AdsPipesJobConf::DEFAULT_TASK_TIMEOUT);
 }
 
 int PlanRunner::runMapReduceJob(const std::string& mapProgram,
@@ -1168,7 +1186,8 @@ int PlanRunner::runMapReduceJob(const std::string& mapProgram,
 {
   AdsDfSpeculativeExecution speculative;
   return runMapReduceJob(mapProgram, reduceProgram, "", "", inputDirArg, 
-			 outputDirArg, numReduces, jvmReuse, useHp, speculative);
+			 outputDirArg, numReduces, jvmReuse, useHp, speculative, 
+			 AdsPipesJobConf::DEFAULT_TASK_TIMEOUT);
 }
 
 int PlanRunner::runMapReduceJob(const std::string& mapProgram,
@@ -1180,7 +1199,8 @@ int PlanRunner::runMapReduceJob(const std::string& mapProgram,
 				int32_t numReduces,
 				bool jvmReuse,
 				bool useHp,
-				AdsDfSpeculativeExecution speculative)
+				AdsDfSpeculativeExecution speculative,
+				int32_t timeout)
 {
   // Create a temporary work space for this job
   boost::shared_ptr<HdfsDelete> cleanup;
@@ -1208,6 +1228,7 @@ int PlanRunner::runMapReduceJob(const std::string& mapProgram,
   jobConf.setName(name);
   jobConf.setJobQueue(jobQueue);
   jobConf.setSpeculativeExecution(speculative);
+  jobConf.setTaskTimeout(timeout);
 
   std::string mapBuf;
   std::string emitFormat;
@@ -1340,6 +1361,7 @@ int PlanRunner::run(int argc, char ** argv)
     ("input", po::value<std::string>(), "input directory for jobs run through Hadoop pipes")
     ("output", po::value<std::string>(), "output directory for jobs run through Hadoop pipes")
     ("jobqueue", po::value<std::string>(), "job queue for jobs run through Hadoop pipes")
+    ("task-timeout", po::value<int32_t>(), "task timeout for jobs run through Hadoop pipes")
     ("speculative-execution", po::value<std::string>(), 
      "speculative execution settings for jobs run through Hadoop pipes (both|none|map|reduce)")
     ("proxy", "use proxy ads-hp-client for jobs run through Hadoop pipes")
@@ -1371,6 +1393,7 @@ int PlanRunner::run(int argc, char ** argv)
   pairs.push_back(std::make_pair("map", "nojvmreuse"));
   pairs.push_back(std::make_pair("map", "jobqueue"));
   pairs.push_back(std::make_pair("map", "speculative-execution"));
+  pairs.push_back(std::make_pair("map", "task-timeout"));
   if (!checkRequiredArgs(vm, pairs)) {
     std::cerr << desc << std::endl;
     return 1;    
@@ -1423,6 +1446,9 @@ int PlanRunner::run(int argc, char ** argv)
     AdsDfSpeculativeExecution speculative(vm.count("speculative-execution") ?
 					  vm["speculative-execution"].as<std::string>().c_str() :
 					  "both");
+    int32_t timeout(vm.count("task-timeout") ? 
+		    vm["task-timeout"].as<int32_t>() : 
+		    AdsPipesJobConf::DEFAULT_TASK_TIMEOUT);
 
     std::string mapProgram;
     readInputFile(vm["map"].as<std::string>(), mapProgram);
@@ -1458,7 +1484,8 @@ int PlanRunner::run(int argc, char ** argv)
 			   reduces,
 			   jvmReuse,
 			   useHp,
-			   speculative);
+			   speculative,
+			   timeout);
   } else {
     std::string inputFile(vm["file"].as<std::string>());
     checkRegularFileExists(inputFile);
